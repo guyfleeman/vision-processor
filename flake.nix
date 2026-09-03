@@ -37,6 +37,13 @@
               cmake
               pkg-config
               protobuf          # provides protoc for both C++ and Python codegen
+
+              # gui/ toolchain. The Go host and its Svelte frontend are built
+              # here rather than in a second flake so that one `nix develop`
+              # covers every language in the repo.
+              go
+              buf               # protobuf codegen for Go and TypeScript at once
+              nodejs_22         # frontend build; .github/workflows/ci.yml pins 22
             ];
 
             buildInputs = with pkgs; [
@@ -72,12 +79,22 @@
             UV_PYTHON = python.interpreter;
             UV_PYTHON_DOWNLOADS = "never";
 
+            # The other league Go tools carry a `toolchain` line newer than the
+            # `go` directive (ssl-vision-client: go 1.25.0, toolchain go1.27.1).
+            # Left to itself Go would fetch that toolchain over the network,
+            # silently ignoring the pin above and breaking sandboxed builds.
+            # "local" turns the mismatch into an error at the point it happens.
+            GOTOOLCHAIN = "local";
+
             shellHook = ''
               echo "vision_processor dev shell"
               echo "  eigen      ${pkgs.eigen.version}"
               echo "  opencv     ${pkgs.opencv.version}"
               echo "  ffmpeg     ${pkgs.ffmpeg_8.version}"
               echo "  protobuf   ${pkgs.protobuf.version}"
+              echo "  go         ${pkgs.go.version}"
+              echo "  node       ${pkgs.nodejs_22.version}"
+              echo "  buf        ${pkgs.buf.version}"
               echo
               echo "  cmake -B build . && make -C build -j vision_processor"
               echo

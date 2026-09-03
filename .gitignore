@@ -12,6 +12,7 @@ __pycache__
 # Debug and test image directories
 /img
 /test-data
+*.log
 
 #Output binaries
 vision_processor
