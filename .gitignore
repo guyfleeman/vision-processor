@@ -19,6 +19,9 @@ vision_processor
 blob_benchmark
 geometry_benchmark
 
+# Makefile sentinel for the frontend build
+/gui/.frontend
+
 #CMake files
 /build
 .cmake
