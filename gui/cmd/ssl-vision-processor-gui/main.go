@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/logging"
 )
@@ -46,6 +49,23 @@ func main() {
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
+	srv := &http.Server{
+		Addr: *address,
+		Handler: NewVisionServer(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("http server init failed", "err", err)
+
+			// ListenAndServer always returns, but ErrServerClosed is the graceful shutdown condition
+			// if we got anything else, the system didn't start and the process should die
+			// call stopSignals() now to cancel the context otherwise we continue to block on Ctrl+C
+			stopSignals()
+		}
+	}()
+
 	slog.Info("UI is available", "url", formattedAddress())
 
 	<-ctx.Done()
@@ -54,14 +74,16 @@ func main() {
 	// Ctrl-C should kill the process outright rather than being swallowed.
 	stopSignals()
 
-	slog.Info("shutting down")
+	slog.Info("initiating graceful shutdown")
 
 	// Cleanup of the HTTP server, receivers and bus clients goes here, bounded
 	// by its own context so a wedged component cannot hang the process:
-	//
-	//	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	//	defer cancel()
-	//	httpServer.Shutdown(shutdownCtx)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http server failed to close gracefully", "err", err)
+	}
 
 	slog.Info("shutdown complete")
 }

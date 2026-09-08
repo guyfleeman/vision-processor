@@ -18,13 +18,13 @@ repos:
         pass_filenames: false
       - id: eslint
         name: eslint
-        entry: npm --prefix wrapper-frontend run lint
+        entry: npm --prefix gui/frontend run lint
         language: system
-        files: ^wrapper-frontend/
+        files: ^gui/frontend/
         pass_filenames: false
       - id: prettier
         name: prettier
-        entry: npm --prefix wrapper-frontend run format:check
+        entry: npm --prefix gui/frontend run format:check
         language: system
-        files: ^wrapper-frontend/
+        files: ^gui/frontend/
         pass_filenames: false

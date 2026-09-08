@@ -59,11 +59,11 @@ jobs:
           '
 
   frontend:
-    name: Frontend (wrapper-frontend)
+    name: Frontend (gui/frontend)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: wrapper-frontend
+        working-directory: gui/frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +71,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: wrapper-frontend/package-lock.json
+          cache-dependency-path: gui/frontend/package-lock.json
 
       - run: npm ci
 

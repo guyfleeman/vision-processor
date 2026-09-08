@@ -1,4 +1,4 @@
-# wrapper-frontend
+# vision-processor-gui-frontend
 
 Browser UI for the vision-processor wrapper. Svelte 5 + TypeScript + Vite.
 
@@ -17,7 +17,7 @@ Two terminals from the repo root:
 ./start_wrapper.sh
 
 # terminal 2 (the Vite dev server, on :5173 with HMR)
-cd wrapper-frontend
+cd gui/frontend
 npm install
 npm run dev
 ```

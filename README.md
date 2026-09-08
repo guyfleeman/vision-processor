@@ -17,7 +17,7 @@ for all vision_processors, teams and the game controller.
 A modular replacement for `geom_publisher.py` plus a browser UI:
 
 - `wrapper_backend/` — async Python (uv-managed). Owns the field geometry, absorbs incoming calibrations, exposes the bus over WebSocket. Run with `./start_wrapper.sh` (defaults to `geometry-divB.yml`). See [`wrapper_backend/README.md`](wrapper_backend/README.md).
-- `wrapper-frontend/` — Svelte 5 + TypeScript + Vite. Connects to the backend's WebSocket and renders the operator UI. Run with `cd wrapper-frontend && npm install && npm run dev`. See [`wrapper-frontend/README.md`](wrapper-frontend/README.md).
+- `gui/frontend/` — Svelte 5 + TypeScript + Vite. Connects to the backend's WebSocket and renders the operator UI. Run with `cd gui/frontend && npm install && npm run dev`. See [`gui/frontend/README.md`](gui/frontend/README.md).
 
 ## Dependency installation and compilation
 
