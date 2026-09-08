@@ -2,7 +2,7 @@ BINARY = ssl-vision-processor-gui
 
 # ./... would also descend into frontend/node_modules, where npm packages ship
 # stray Go source (flatted/golang, for one). Enumerate our own trees instead.
-GO_PACKAGES = ./cmd/... ./internal/...
+GO_PACKAGES = ./cmd/... ./internal/... ./frontend
 
 FRONTEND_SOURCES = $(shell find frontend -type f \
 	-not -path "frontend/node_modules/*" \

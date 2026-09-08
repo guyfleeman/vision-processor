@@ -8,5 +8,7 @@ import (
 
 func (s *VisionServer) addRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/health", s.handleHealth())
+	mux.Handle("/api/", http.NotFoundHandler())
+	
 	mux.Handle("/", frontend.HandleFrontend())
 }
