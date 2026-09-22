@@ -152,27 +152,12 @@ func LoadPreset(path string) (FieldConfig, OptionalLinesConfig, error) {
 	return field, opt, nil
 }
 
-// UpdateField replaces the field dimensions and optional-line toggles,
-// regenerates the derived field lines/arcs, and persists the change to the
-// file Geometry was loaded from. Existing calibrations are kept.
-//
-// Persisting rewrites the whole file, so hand-added comments in it do not
-// survive a save made through this path.
-func (g *Geometry) UpdateField(cfg FieldConfig, opt OptionalLinesConfig) error {
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	// Checked before anything below mutates g.wrapper/g.optional: a rejected
-	// save must not leave the in-memory (and multicast-broadcast) state
-	// holding values that were never actually persisted.
-	if ReadOnlyFiles[filepath.Base(g.path)] {
-		return &ReadOnlyError{path: g.path}
-	}
-
+// applyFieldConfig builds a field message from cfg, regenerates its derived
+// markings, and installs both it and opt onto g. Callers must hold mu and
+// must have already validated cfg and checked ReadOnlyFiles for whichever
+// path they're about to write to -- this never fails, so it's only safe to
+// call once nothing left can reject the operation.
+func (g *Geometry) applyFieldConfig(cfg FieldConfig, opt OptionalLinesConfig) {
 	field := &vision.SSL_GeometryFieldSize{
 		FieldLength:               proto.Int32(cfg.FieldLength),
 		FieldWidth:                proto.Int32(cfg.FieldWidth),
@@ -202,6 +187,30 @@ func (g *Geometry) UpdateField(cfg FieldConfig, opt OptionalLinesConfig) error {
 
 	g.wrapper.Geometry.Field = field
 	g.optional = optional
+}
+
+// UpdateField replaces the field dimensions and optional-line toggles,
+// regenerates the derived field lines/arcs, and persists the change to the
+// file Geometry was loaded from. Existing calibrations are kept.
+//
+// Persisting rewrites the whole file, so hand-added comments in it do not
+// survive a save made through this path.
+func (g *Geometry) UpdateField(cfg FieldConfig, opt OptionalLinesConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Checked before anything below mutates g.wrapper/g.optional: a rejected
+	// save must not leave the in-memory (and multicast-broadcast) state
+	// holding values that were never actually persisted.
+	if ReadOnlyFiles[filepath.Base(g.path)] {
+		return &ReadOnlyError{path: g.path}
+	}
+
+	g.applyFieldConfig(cfg, opt)
 
 	if err := g.reencode(); err != nil {
 		return fmt.Errorf("encode updated geometry: %w", err)
@@ -212,6 +221,76 @@ func (g *Geometry) UpdateField(cfg FieldConfig, opt OptionalLinesConfig) error {
 	}
 
 	return nil
+}
+
+// SaveAs is UpdateField plus switching which file Geometry edits: it writes
+// cfg/opt to path rather than the current file, and -- once that write
+// succeeds -- every subsequent Save (UpdateField) goes to path too. Whatever
+// non-field content the current file carried (e.g. "models") comes along
+// unchanged; existing calibrations are kept, same as UpdateField.
+func (g *Geometry) SaveAs(path string, cfg FieldConfig, opt OptionalLinesConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if ReadOnlyFiles[filepath.Base(path)] {
+		return &ReadOnlyError{path: path}
+	}
+
+	g.applyFieldConfig(cfg, opt)
+
+	if err := g.reencode(); err != nil {
+		return fmt.Errorf("encode updated geometry: %w", err)
+	}
+
+	// g.path only changes once we're past validation and encoding, so a
+	// rejected SaveAs never leaves Geometry claiming to be a file nothing was
+	// actually written to.
+	previousPath := g.path
+	g.path = path
+
+	if err := g.saveYAML(cfg, opt); err != nil {
+		g.path = previousPath
+
+		return fmt.Errorf("save %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// LoadFrom replaces this Geometry's entire state -- field config, optional
+// lines, and whatever else the file carries (e.g. "models") -- with what's in
+// path, and starts editing that file: subsequent Save calls go there.
+//
+// Existing calibrations are discarded, not carried over: they were computed
+// against the field this Geometry used to hold, and are meaningless against
+// whatever was just loaded (which may not even be the same size).
+func (g *Geometry) LoadFrom(path string) error {
+	wrapper, optional, extra, err := Load(path)
+	if err != nil {
+		return err
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.wrapper = wrapper
+	g.path = path
+	g.optional = optional
+	g.extra = extra
+
+	return g.reencode()
+}
+
+// Path reports the file Geometry currently reads from and saves to.
+func (g *Geometry) Path() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return g.path
 }
 
 // saveYAML writes the current field config and optional-line toggles back to

@@ -188,3 +188,77 @@ func TestLoadPresetReadsWithoutAGeometryInstance(t *testing.T) {
 		t.Error("halfway = false, want true (per the fixture)")
 	}
 }
+
+func TestSaveAsWritesToTheNewPathAndSwitchesToIt(t *testing.T) {
+	g := testGeometry(t)
+
+	newPath := filepath.Join(t.TempDir(), "new-name.yml")
+	cfg := testConfig()
+
+	if err := g.SaveAs(newPath, cfg, testOptional()); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	if g.Path() != newPath {
+		t.Errorf("Path() = %q, want %q", g.Path(), newPath)
+	}
+
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("Stat(newPath): %v", err)
+	}
+
+	gotCfg, _ := g.FieldConfig()
+	if gotCfg != cfg {
+		t.Errorf("FieldConfig() = %+v, want %+v", gotCfg, cfg)
+	}
+
+	// A plain Save afterward must go to the new path, not the original one.
+	if err := g.UpdateField(cfg, testOptional()); err != nil {
+		t.Fatalf("UpdateField after SaveAs: %v", err)
+	}
+}
+
+func TestSaveAsRefusesAPresetTarget(t *testing.T) {
+	g := testGeometry(t)
+
+	before := g.Path()
+
+	var readOnly *ReadOnlyError
+	if err := g.SaveAs("geometry-divB.yml", testConfig(), testOptional()); !errors.As(err, &readOnly) {
+		t.Fatalf("SaveAs err = %v, want a *ReadOnlyError", err)
+	}
+
+	if g.Path() != before {
+		t.Errorf("Path() = %q, want unchanged %q", g.Path(), before)
+	}
+}
+
+func TestLoadFromReplacesStateAndDiscardsCalibrations(t *testing.T) {
+	g := testGeometry(t)
+	g.Absorb(&vision.SSL_GeometryData{Calib: []*vision.SSL_GeometryCameraCalibration{calib(0, 400)}})
+
+	otherPath := filepath.Join(t.TempDir(), "other.yml")
+	if err := os.WriteFile(otherPath, []byte(
+		"optional_field_lines:\n  goal2goal: false\n  halfway: false\n  centercircle: false\n  penalty: false\n"+
+			"field:\n  field_length: 3000\n  field_width: 2000\n  goal_width: 300\n  goal_depth: 60\n  boundary_width: 120\n",
+	), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := g.LoadFrom(otherPath); err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+
+	if g.Path() != otherPath {
+		t.Errorf("Path() = %q, want %q", g.Path(), otherPath)
+	}
+
+	cfg, _ := g.FieldConfig()
+	if cfg.FieldLength != 3000 {
+		t.Errorf("field_length = %d, want 3000 (from the newly loaded file)", cfg.FieldLength)
+	}
+
+	if got := g.Snapshot().GetGeometry().GetCalib(); len(got) != 0 {
+		t.Errorf("calib = %v, want discarded after loading a different file", got)
+	}
+}

@@ -25,19 +25,12 @@ export const SCALABLE_KEYS: (keyof FieldConfig)[] = [
   "lineThickness",
 ];
 
-export const HARDWARE_KEYS: (keyof FieldConfig)[] = [
-  "ballRadius",
-  "maxRobotRadius",
-];
-
 // Applies a preset at the given percentage scale (100 = actual rule-book
-// size) to a FieldConfig, returning a new object. scaleHardware controls
-// whether ballRadius/maxRobotRadius are scaled too, or left at the preset's
-// real-hardware value.
+// size) to a FieldConfig, returning a new object. ballRadius/maxRobotRadius
+// are real hardware and always left at the preset's value.
 export function scalePreset(
   preset: FieldPreset,
   scalePercent: number,
-  scaleHardware: boolean,
 ): FieldConfig {
   const factor = scalePercent / 100;
   const result: FieldConfig = { ...preset.field };
@@ -46,15 +39,6 @@ export function scalePreset(
     const value = preset.field[key];
     if (typeof value === "number") {
       result[key] = Math.round(value * factor);
-    }
-  }
-
-  if (scaleHardware) {
-    for (const key of HARDWARE_KEYS) {
-      const value = preset.field[key];
-      if (typeof value === "number") {
-        result[key] = Math.round(value * factor * 10) / 10;
-      }
     }
   }
 

@@ -18,6 +18,7 @@ vision_processor
 blob_benchmark
 geometry_benchmark
 /gui/bin
+/gui/ssl-vision-processor-gui
 
 # Makefile sentinel for the frontend build
 /gui/.frontend

@@ -162,6 +162,91 @@ func TestGetFieldPresetsDegradesGracefullyWhenFilesAreMissing(t *testing.T) {
 	}
 }
 
+func TestSaveAsWritesANewFileAndGetReflectsIt(t *testing.T) {
+	srv := testServer(t)
+
+	newPath := filepath.Join(t.TempDir(), "renamed.yml")
+	body := strings.NewReader(`{
+		"path": "` + newPath + `",
+		"field": {"fieldLength": 2160, "fieldWidth": 1680, "goalWidth": 280, "goalDepth": 50, "boundaryWidth": 100, "lineThickness": 10},
+		"optionalFieldLines": {"halfway": true, "penalty": true}
+	}`)
+
+	postReq := httptest.NewRequest(http.MethodPost, "/api/geometry/field/save-as", body)
+	postRec := httptest.NewRecorder()
+	srv.ServeHTTP(postRec, postReq)
+
+	if postRec.Code != http.StatusNoContent {
+		t.Fatalf("save-as status = %d, want %d, body: %s", postRec.Code, http.StatusNoContent, postRec.Body.String())
+	}
+
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("Stat(newPath): %v", err)
+	}
+
+	getRec := httptest.NewRecorder()
+	srv.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/geometry/field", nil))
+
+	if !strings.Contains(getRec.Body.String(), `"fieldLength":2160`) {
+		t.Errorf("GET after save-as returned %q, want it to reflect the new values", getRec.Body.String())
+	}
+
+	if !strings.Contains(getRec.Body.String(), newPath) {
+		t.Errorf("GET after save-as path = %q, want it to contain %q", getRec.Body.String(), newPath)
+	}
+}
+
+func TestSaveAsRejectsAPresetTarget(t *testing.T) {
+	body := strings.NewReader(`{
+		"path": "geometry-divB.yml",
+		"field": {"fieldLength": 2160, "fieldWidth": 1680, "goalWidth": 280, "goalDepth": 50, "boundaryWidth": 100},
+		"optionalFieldLines": {}
+	}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/geometry/field/save-as", body)
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestLoadReplacesTheActiveFieldAndReturnsIt(t *testing.T) {
+	otherPath := filepath.Join(t.TempDir(), "other.yml")
+	if err := os.WriteFile(otherPath, []byte(
+		"optional_field_lines:\n  goal2goal: false\n  halfway: false\n  centercircle: false\n  penalty: false\n"+
+			"field:\n  field_length: 3000\n  field_width: 2000\n  goal_width: 300\n  goal_depth: 60\n  boundary_width: 120\n",
+	), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/geometry/field/load", strings.NewReader(`{"path":"`+otherPath+`"}`))
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if !strings.Contains(rec.Body.String(), `"fieldLength":3000`) {
+		t.Errorf("body = %q, want it to reflect the loaded file", rec.Body.String())
+	}
+}
+
+func TestLoadOfAMissingFileReturns400(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/geometry/field/load", strings.NewReader(`{"path":"does-not-exist.yml"}`))
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 // A wrong method is a 404 rather than a 405: the "/" catch-all matches every
 // method, so ServeMux never reaches its method-not-allowed path. What matters is
 // that the "/api/" subtree answers, instead of the request falling through to

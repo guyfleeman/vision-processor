@@ -5,6 +5,8 @@
     loadVirtualField,
     loadFieldPresets,
     saveVirtualField,
+    saveVirtualFieldAs,
+    loadVirtualFieldFrom,
   } from "./geometry.svelte";
   import FieldSketch from "./FieldSketch.svelte";
   import { scalePreset } from "./fieldPresets";
@@ -36,6 +38,9 @@
   // point past the end.
   let clampedCameraId = $derived(Math.min(cameraId, cameraAmount - 1));
 
+  // The FieldSketch highlight: which portion of the field cameraId is
+  // responsible for out of cameraAmount, so the rest of the markings (e.g.
+  // the other goal's penalty box) render dimmed.
   let fieldSlice = $derived(
     computeFieldSlice(
       clampedCameraId,
@@ -65,7 +70,6 @@
 
   let selectedPresetName = $state("Division B");
   let scalePercent = $state(100);
-  let scaleHardware = $state(false);
 
   function applyPreset(): void {
     const preset = virtualField.presets.find(
@@ -73,8 +77,24 @@
     );
     if (!preset) return;
 
-    virtualField.field = scalePreset(preset, scalePercent, scaleHardware);
+    // Ball/robot size are real hardware, not scaled with a shrunk field --
+    // scalePreset always leaves them at the preset's own value.
+    virtualField.field = scalePreset(preset, scalePercent);
     markDirty();
+  }
+
+  let saveAsPath = $state("");
+  let loadPath = $state("");
+
+  function handleSaveAs(): void {
+    if (!saveAsPath) return;
+    void saveVirtualFieldAs(saveAsPath);
+  }
+
+  function handleLoad(): void {
+    if (!loadPath) return;
+    if (virtualField.dirty && !confirm("Discard unsaved changes?")) return;
+    void loadVirtualFieldFrom(loadPath);
   }
 
   // Dimension fields, paired with their FieldConfig key and a label. Order
@@ -124,11 +144,10 @@
 </script>
 
 <section class="field-editor">
-  <h2>Virtual field</h2>
-  <p class="hint">
-    Measured dimensions, in mm. Saving regenerates the field markings below and
-    writes them back to geometry.yml.
-  </p>
+  <div class="title-row">
+    <h2>Virtual field</h2>
+    <span class="path">{virtualField.path || "(unsaved)"}</span>
+  </div>
 
   {#if virtualField.error}
     <p class="error">Error: {virtualField.error}</p>
@@ -142,6 +161,41 @@
       }}
     >
       <fieldset disabled={virtualField.loading}>
+        <legend>File</legend>
+        <div class="file-actions">
+          <button
+            type="submit"
+            disabled={virtualField.saving || !virtualField.dirty}
+          >
+            {virtualField.saving ? "Saving..." : "Save"}
+          </button>
+          {#if virtualField.dirty && !virtualField.saving}
+            <span class="hint">*new changes</span>
+          {/if}
+        </div>
+
+        <label>
+          Save as
+          <span>
+            <input type="text" bind:value={saveAsPath} placeholder="path.yml" />
+            <button type="button" onclick={handleSaveAs} disabled={!saveAsPath}
+              >Save as</button
+            >
+          </span>
+        </label>
+
+        <label>
+          Load
+          <span>
+            <input type="text" bind:value={loadPath} placeholder="path.yml" />
+            <button type="button" onclick={handleLoad} disabled={!loadPath}
+              >Load</button
+            >
+          </span>
+        </label>
+      </fieldset>
+
+      <fieldset disabled={virtualField.loading}>
         <legend>Field layout</legend>
 
         <label class="radio-row">
@@ -154,7 +208,7 @@
                 setFieldLayout("full");
               }}
             />
-            Full field (I measured the whole thing)
+            Full field
           </span>
           <span>
             <input
@@ -165,13 +219,13 @@
                 setFieldLayout("half");
               }}
             />
-            Half field (this camera only sees part of it)
+            Half field
           </span>
         </label>
 
         {#if fieldLayout === "half"}
           <label>
-            Half length (goal line to split line)
+            Half length (full: {virtualField.field.fieldLength ?? 0}mm)
             <input
               type="number"
               value={halfLength}
@@ -180,15 +234,10 @@
               }}
             />
           </label>
-          <p class="hint">
-            Full field length is {virtualField.field.fieldLength ?? 0}mm (2x the
-            half above). Field width below is the full, unsplit width -- a
-            length-wise split still shows both touchlines.
-          </p>
         {/if}
 
         <label>
-          Cameras across the {fieldLayout === "half" ? "full" : ""} field
+          Cameras (camera_amount: {cameraAmount})
           <select
             value={cameraCount}
             onchange={(e) => {
@@ -200,14 +249,9 @@
             {/each}
           </select>
         </label>
-        <p class="hint">
-          camera_amount: {cameraAmount}. Not yet pushed anywhere -- set
-          <code>geometry.camera_amount: {cameraAmount}</code> in each vision processor's
-          own config.yml for now.
-        </p>
 
         <label>
-          Which camera is this? (camera_id)
+          This camera (camera_id)
           <select
             value={clampedCameraId}
             onchange={(e) => {
@@ -219,20 +263,12 @@
             {/each}
           </select>
         </label>
-        <p class="hint">
-          Highlighted below: what this specific camera is responsible for -- the
-          rest of the field's markings (e.g. the other goal's penalty box) are
-          dimmed, since this camera can't calibrate against them.
-        </p>
       </fieldset>
 
       <fieldset disabled={virtualField.loading}>
         <legend>Start from a rulebook preset</legend>
         {#if virtualField.presets.length === 0}
-          <p class="hint">
-            No presets available (geometry-divA.yml/geometry-divB.yml not found
-            from the host's working directory).
-          </p>
+          <p class="hint">No presets available.</p>
         {/if}
         <label>
           Division
@@ -249,20 +285,9 @@
             %
           </span>
         </label>
-        <label class="checkbox">
-          <input type="checkbox" bind:checked={scaleHardware} />
-          Also scale ball/robot size (usually real hardware -- leave off)
-        </label>
         <button type="button" onclick={applyPreset}>
           Fill in dimensions from this preset
         </button>
-        <p class="hint">
-          Overwrites the dimension fields below (not yet saved). Real SSL
-          penalty box, goal, and boundary sizes are fixed rulebook constants,
-          not derived from field size or camera count -- this is the actual
-          principled way to approximate them for a scaled-down field, rather
-          than guessing a ratio by hand.
-        </p>
       </fieldset>
 
       <fieldset disabled={virtualField.loading}>
@@ -292,16 +317,6 @@
           </label>
         {/each}
       </fieldset>
-
-      <button
-        type="submit"
-        disabled={virtualField.saving || !virtualField.dirty}
-      >
-        {virtualField.saving ? "Saving..." : "Save"}
-      </button>
-      {#if virtualField.dirty && !virtualField.saving}
-        <span class="hint">*new changes</span>
-      {/if}
     </form>
 
     <div class="sketch">
@@ -312,10 +327,6 @@
         arcs={virtualField.fieldArcs}
         slice={fieldSlice}
       />
-      <p class="hint">
-        Markings reflect the last saved dimensions; the highlighted region
-        updates live as you change camera count/id above.
-      </p>
     </div>
   </div>
 </section>
@@ -323,6 +334,23 @@
 <style>
   .field-editor {
     max-width: 900px;
+  }
+
+  .title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .title-row h2 {
+    margin: 0;
+  }
+
+  .path {
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: #666;
   }
 
   .layout {
@@ -363,14 +391,19 @@
     font-weight: normal;
   }
 
-  code {
-    background: #eee;
-    padding: 0.1rem 0.3rem;
-    border-radius: 3px;
-  }
-
   input[type="number"] {
     width: 6rem;
+  }
+
+  input[type="text"] {
+    width: 10rem;
+  }
+
+  .file-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.4rem 0;
   }
 
   .error {

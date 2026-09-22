@@ -58,8 +58,11 @@ func (s *VisionServer) handleGetGeometry() http.HandlerFunc {
 
 // fieldConfigResponse is the "virtual field" shape: just the editable
 // dimensions and optional-line toggles, not the full wrapper packet (calib,
-// source, generated field_lines/arcs) that handleGetGeometry serves.
+// source, generated field_lines/arcs) that handleGetGeometry serves. Path is
+// which file this came from / would be saved to -- omitted on requests where
+// it doesn't apply (PUT), populated on every response.
 type fieldConfigResponse struct {
+	Path               string                       `json:"path,omitempty"`
 	Field              geometry.FieldConfig         `json:"field"`
 	OptionalFieldLines geometry.OptionalLinesConfig `json:"optionalFieldLines"`
 }
@@ -70,7 +73,8 @@ func (s *VisionServer) handleGetFieldConfig() http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := json.NewEncoder(w).Encode(fieldConfigResponse{Field: field, OptionalFieldLines: optional}); err != nil {
+		resp := fieldConfigResponse{Path: s.geometry.Path(), Field: field, OptionalFieldLines: optional}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("writing field config response", "err", err)
 		}
 	}
@@ -104,6 +108,87 @@ func (s *VisionServer) handlePutFieldConfig() http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// saveAsRequest is fieldConfigResponse's shape with Path meaning "save here"
+// instead of "loaded from here" -- same fields, different direction, kept as
+// a distinct type so the two aren't confused at the call site.
+type saveAsRequest = fieldConfigResponse
+
+// handlePostSaveAs writes the given field config to Path and switches
+// Geometry to editing that file from now on -- see geometry.Geometry.SaveAs.
+func (s *VisionServer) handlePostSaveAs() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req saveAsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "malformed request body: "+err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		if req.Path == "" {
+			http.Error(w, "path: required", http.StatusBadRequest)
+
+			return
+		}
+
+		if err := s.geometry.SaveAs(req.Path, req.Field, req.OptionalFieldLines); err != nil {
+			var validation *geometry.ValidationError
+			var readOnly *geometry.ReadOnlyError
+
+			switch {
+			case errors.As(err, &validation), errors.As(err, &readOnly):
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			default:
+				slog.Error("saving field config as", "path", req.Path, "err", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			}
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+type loadRequest struct {
+	Path string `json:"path"`
+}
+
+// handlePostLoad replaces the live geometry with whatever's in the given
+// path and returns it, so the frontend doesn't need a second round trip --
+// see geometry.Geometry.LoadFrom. Any failure to load is reported as 400:
+// it's about the path the caller gave, not an internal failure on our part.
+func (s *VisionServer) handlePostLoad() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req loadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "malformed request body: "+err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		if req.Path == "" {
+			http.Error(w, "path: required", http.StatusBadRequest)
+
+			return
+		}
+
+		if err := s.geometry.LoadFrom(req.Path); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		field, optional := s.geometry.FieldConfig()
+
+		w.Header().Set("Content-Type", "application/json")
+
+		resp := fieldConfigResponse{Path: s.geometry.Path(), Field: field, OptionalFieldLines: optional}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("writing load response", "err", err)
+		}
 	}
 }
 
