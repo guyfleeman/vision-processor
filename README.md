@@ -12,12 +12,12 @@ The geometry publisher `geom_publisher.py` publishes the field geometry
 for all vision_processors, teams and the game controller.
 `cam_viewer.py` opens the `mpv` video player with the camera streams from the vision_processor instances.
 
-## Wrapper
+## GUI
 
-A modular replacement for `geom_publisher.py` plus a browser UI:
+A Go host plus a browser UI, replacing `geom_publisher.py` for anyone running it:
 
-- `wrapper_backend/` — async Python (uv-managed). Owns the field geometry, absorbs incoming calibrations, exposes the bus over WebSocket. Run with `./start_wrapper.sh` (defaults to `geometry-divB.yml`). See [`wrapper_backend/README.md`](wrapper_backend/README.md).
-- `gui/frontend/` — Svelte 5 + TypeScript + Vite. Connects to the backend's WebSocket and renders the operator UI. Run with `cd gui/frontend && npm install && npm run dev`. See [`gui/frontend/README.md`](gui/frontend/README.md).
+- `gui/` — Go host (`cmd/ssl-vision-processor-gui`). Owns the field geometry, absorbs calibrations from vision processors over multicast, and serves the embedded frontend, JSON API, a WebSocket for live updates, and debug snapshot images all on one port. Run with `cd gui && make run` (defaults to `geometry-divB.yml`).
+- `gui/frontend/` — Svelte 5 + TypeScript + Vite, embedded into the Go binary. Run standalone with `cd gui/frontend && npm install && npm run dev` (proxies `/api` and `/ws` to the Go host), or serve it from the Go host directly with `make run`. See [`gui/frontend/README.md`](gui/frontend/README.md).
 
 ## Dependency installation and compilation
 

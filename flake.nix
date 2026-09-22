@@ -18,8 +18,7 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
-          # Only what python/*.py needs at the system level. wrapper_backend/ is
-          # uv-managed (see pyproject.toml) and brings its own venv.
+          # Only what python/*.py needs at the system level.
           python = pkgs.python3.withPackages (ps: [
             ps.protobuf
             ps.pyyaml
@@ -42,6 +41,7 @@
               # here rather than in a second flake so that one `nix develop`
               # covers every language in the repo.
               go
+              gopls             # language server; VS Code formats and vets through it
               buf               # protobuf codegen for Go and TypeScript at once
               nodejs_22         # frontend build; .github/workflows/ci.yml pins 22
             ];
@@ -68,16 +68,11 @@
               openclRuntime
 
               python
-              uv                # wrapper_backend/
             ];
 
             # The ICD loader finds runtimes through this. Without it the loader
             # reports zero platforms and vision_processor exits at startup.
             OCL_ICD_VENDORS = "${openclRuntime}/etc/OpenCL/vendors";
-
-            # uv must not download its own interpreter inside the shell.
-            UV_PYTHON = python.interpreter;
-            UV_PYTHON_DOWNLOADS = "never";
 
             # The other league Go tools carry a `toolchain` line newer than the
             # `go` directive (ssl-vision-client: go 1.25.0, toolchain go1.27.1).

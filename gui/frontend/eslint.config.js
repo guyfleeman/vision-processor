@@ -32,6 +32,18 @@ export default ts.config(
     },
   },
   {
+    // eslint-plugin-svelte's own base config matches *.svelte.ts/*.svelte.js
+    // (the Svelte 5 "runes module" convention) and hands them to
+    // svelte-eslint-parser, but without delegating to the TS parser the way
+    // it does for *.svelte files above -- so a plain `import type { X }`
+    // fails to parse. Same fix as the .svelte override, for the same reason.
+    files: ["**/*.svelte.ts", "**/*.svelte.js"],
+    languageOptions: {
+      parser: svelteParser,
+      parserOptions: { parser: ts.parser },
+    },
+  },
+  {
     ignores: [
       "dist/",
       "node_modules/",

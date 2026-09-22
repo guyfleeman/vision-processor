@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { connectionState, topic } from "./lib/wrapper-bus";
+  import { topic } from "./lib/wrapper-bus";
+  import Shell from "./lib/layout/Shell.svelte";
 
   let subscribed = $state(false);
   const wrapperPacket = topic<Record<string, unknown>>("wrapper_packet.out");
 
-  const apiBase = `http://${location.hostname}:8765`;
+  // Same-origin: the Go host serves /api itself, alongside /ws and the frontend.
   interface Snapshot {
     cam_id: string;
     view: string;
@@ -15,7 +16,7 @@
 
   async function refreshSnapshotList(): Promise<void> {
     try {
-      const response = await fetch(`${apiBase}/snapshots`);
+      const response = await fetch("/api/snapshots");
       if (response.ok) snapshots = (await response.json()) as Snapshot[];
     } catch {
       // ignore: next tick will retry
@@ -39,93 +40,64 @@
   }
 </script>
 
-<main>
-  <header>
-    <h1>vision-processor wrapper</h1>
-    <span class="badge" data-state={$connectionState}>
-      {$connectionState}
-    </span>
-  </header>
+<Shell>
+  {#snippet below()}
+    <!--
+      Everything in this snippet predates the two-column shell (see issue
+      #18) and doesn't belong to any config category -- it's a stand-in for
+      the mockup's Video + Debug Console panels, which aren't built yet
+      (WHEP/live video is still undecided; the Debug Console is a live log
+      viewer over internal/hub that hasn't been started). Lift it into those
+      once they exist rather than growing it further here.
+    -->
+    <p class="below-hint">
+      Temporary debug utilities -- see the note in this file's source.
+    </p>
 
-  <section>
-    <h2>Snapshots</h2>
-    {#if snapshots.length === 0}
-      <p class="hint">No images in img/ yet.</p>
-    {:else}
-      <div class="grid">
-        {#each snapshots as snap (`${snap.cam_id}.${snap.view}`)}
-          <figure>
-            <img
-              src={`${apiBase}/snapshot/${snap.cam_id}/${snap.view}?t=${String(cacheBuster)}`}
-              alt={`cam ${snap.cam_id} ${snap.view}`}
-            />
-            <figcaption>cam {snap.cam_id} / {snap.view}</figcaption>
-          </figure>
-        {/each}
-      </div>
-    {/if}
-  </section>
-
-  <section>
-    <button onclick={toggleSubscribe}>
-      {subscribed ? "Unsubscribe" : "Subscribe to wrapper_packet.out"}
-    </button>
-
-    {#if subscribed}
-      {#if $wrapperPacket}
-        <pre>{JSON.stringify($wrapperPacket, null, 2)}</pre>
+    <section>
+      <h2>Snapshots</h2>
+      {#if snapshots.length === 0}
+        <p class="hint">No images in img/ yet.</p>
       {:else}
-        <p class="hint">Waiting for first frame…</p>
+        <div class="grid">
+          {#each snapshots as snap (`${snap.cam_id}.${snap.view}`)}
+            <figure>
+              <img
+                src={`/api/snapshot/${snap.cam_id}/${snap.view}?t=${String(cacheBuster)}`}
+                alt={`cam ${snap.cam_id} ${snap.view}`}
+              />
+              <figcaption>cam {snap.cam_id} / {snap.view}</figcaption>
+            </figure>
+          {/each}
+        </div>
       {/if}
-    {/if}
-  </section>
+    </section>
 
-  <footer>wrapper-frontend dev skeleton</footer>
-</main>
+    <section>
+      <button onclick={toggleSubscribe}>
+        {subscribed ? "Unsubscribe" : "Subscribe to wrapper_packet.out"}
+      </button>
+
+      {#if subscribed}
+        {#if $wrapperPacket}
+          <pre>{JSON.stringify($wrapperPacket, null, 2)}</pre>
+        {:else}
+          <p class="hint">Waiting for first frame…</p>
+        {/if}
+      {/if}
+    </section>
+  {/snippet}
+</Shell>
 
 <style>
-  main {
-    max-width: 1024px;
-    margin: 0 auto;
-    padding: 1.5rem;
-    font-family: ui-sans-serif, system-ui, sans-serif;
-  }
-
-  header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-  }
-
-  h1 {
-    font-size: 1.25rem;
-    margin: 0;
-  }
-
-  .badge {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 0.2rem 0.5rem;
-    border-radius: 999px;
-    background: #ddd;
-    color: #333;
-  }
-
-  .badge[data-state="open"] {
-    background: #c8e6c9;
-    color: #1b5e20;
-  }
-
-  .badge[data-state="connecting"] {
-    background: #fff3cd;
-    color: #856404;
-  }
-
-  .badge[data-state="closed"] {
-    background: #f8d7da;
-    color: #721c24;
+  .below-hint {
+    color: #a15c00;
+    background: #fff6e5;
+    border: 1px solid #ffe1a8;
+    border-radius: 4px;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+    margin: 0 0 1rem;
   }
 
   .grid {
@@ -168,11 +140,5 @@
   .hint {
     color: #666;
     font-style: italic;
-  }
-
-  footer {
-    margin-top: 2rem;
-    color: #888;
-    font-size: 0.75rem;
   }
 </style>

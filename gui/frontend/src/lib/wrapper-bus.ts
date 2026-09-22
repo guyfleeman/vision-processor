@@ -2,7 +2,9 @@ import { readable, type Readable } from "svelte/store";
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
-const DEFAULT_URL = `ws://${location.hostname || "localhost"}:8765/ws`;
+// Same-origin: the Go host serves /ws itself, alongside /api and the frontend.
+// wss:// when the page itself was loaded over https.
+const DEFAULT_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
 const BACKOFF_INITIAL_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 

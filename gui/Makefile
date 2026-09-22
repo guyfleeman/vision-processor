@@ -15,8 +15,13 @@ all: install
 # Sentinel file, so npm reruns only when a frontend source is newer than the
 # last build. //go:embed resolves at compile time, which is why every Go target
 # below depends on this.
+#
+# `npm run build` empties dist/ first (Vite's emptyOutDir), which deletes
+# dist/.gitkeep along with any stale output. Restore it every time, or a build
+# run before a commit silently drops the tracked sentinel a fresh clone needs.
 .frontend: $(FRONTEND_SOURCES)
 	cd frontend && npm ci && npm run build
+	touch frontend/dist/.gitkeep
 	touch .frontend
 
 frontend: .frontend

@@ -4,24 +4,45 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/geometry"
+	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/hub"
 	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/logging"
+	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/multicast"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 var address = flag.String("address", ":8085", "The address on which the vision processor GUI and API are served, default: :8085")
 var visionAddress = flag.String("visionAddress", "224.5.23.2:10006", "The multicast address of field vision, default: 224.5.23.2:10006")
 var skipInterfaces = flag.String("skipInterfaces", "", "Comma separated list of interface names to ignore when receiving multicast packets")
+
+// geometry-divA.yml/geometry-divB.yml are read-only rulebook presets (see
+// geometry.ReadOnlyFiles) -- the default here must never be one of them, or
+// the first Save in the Virtual Field editor would silently overwrite a
+// tracked competition preset instead of a working copy.
+var geometryFile = flag.String("geometryFile", "geometry.yml", "Field geometry config file, default: geometry.yml")
+var geometryPreset = flag.String("geometryPreset", "geometry-divB.yml", "Preset to seed -geometryFile from if it doesn't exist yet, default: geometry-divB.yml")
+var imgDir = flag.String("imgDir", "img", "Directory the vision processor writes debug snapshot images to, default: img")
 var logLevelFlag = flag.String("logLevel", "Info", "Log Level: Debug, Info, Warn, Error. Default: Info")
 var logFile = flag.String("logFile", "logs/vision-processor-gui.log", "Rotating log file to write alongside stderr, empty to disable. Default: logs/vision-processor-gui.log")
 
 func main() {
+	// Deferred cleanup (closeLog) must run even on a fatal startup error, which
+	// os.Exit would skip -- so main just reports run's exit code instead of
+	// exiting directly.
+	os.Exit(run())
+}
+
+func run() int {
 	flag.Parse()
 
 	// Parsed before Setup so that the level is known when the handler is built,
@@ -45,13 +66,39 @@ func main() {
 
 	slog.Info("Init VP GUI")
 
+	if err := bootstrapGeometryFile(*geometryFile, *geometryPreset); err != nil {
+		slog.Error("bootstrapping geometry file", "err", err)
+
+		return 1
+	}
+
+	geom, err := geometry.New(*geometryFile)
+	if err != nil {
+		slog.Error("loading geometry", "err", err)
+
+		return 1
+	}
+
 	// register Ctrl+C handler
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
+	bridge := multicast.New(*visionAddress, splitInterfaces(*skipInterfaces), level == slog.LevelDebug)
+	wsHub := hub.New()
+
+	var wg sync.WaitGroup
+
+	runBackground(&wg, "multicast bridge", func() error { return bridge.Run(ctx, geom.Absorb) })
+	runBackground(&wg, "geometry publish loop", func() error {
+		return geom.Run(ctx, func(encoded []byte) {
+			bridge.Send(encoded)
+			publishGeometryToHub(wsHub, geom)
+		})
+	})
+
 	srv := &http.Server{
-		Addr: *address,
-		Handler: NewVisionServer(),
+		Addr:              *address,
+		Handler:           NewVisionServer(geom, wsHub, *imgDir),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -76,8 +123,6 @@ func main() {
 
 	slog.Info("initiating graceful shutdown")
 
-	// Cleanup of the HTTP server, receivers and bus clients goes here, bounded
-	// by its own context so a wedged component cannot hang the process:
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -85,7 +130,79 @@ func main() {
 		slog.Error("http server failed to close gracefully", "err", err)
 	}
 
+	wg.Wait()
+
 	slog.Info("shutdown complete")
+
+	return 0
+}
+
+// bootstrapGeometryFile seeds path with a copy of preset if path doesn't
+// exist yet, so a fresh checkout with no working geometry.yml starts from a
+// real, complete config instead of failing at startup. A plain byte copy,
+// not a YAML round trip, so the preset's own comments survive into the new
+// working file. Never touches path if it already exists.
+func bootstrapGeometryFile(path, preset string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil // already exists, nothing to do
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	data, err := os.ReadFile(preset)
+	if err != nil {
+		return fmt.Errorf("read preset %s: %w", preset, err)
+	}
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+
+	slog.Info("seeded a fresh geometry file from preset", "path", path, "preset", preset)
+
+	return nil
+}
+
+// wrapperPacketTopic is the hub topic name the frontend already subscribes to
+// (see gui/frontend/src/App.svelte).
+const wrapperPacketTopic = "wrapper_packet.out"
+
+// publishGeometryToHub re-encodes the current geometry as protojson and
+// publishes it to the browser-facing hub. Called once per publish tick
+// alongside the raw-bytes multicast send, so both destinations stay in sync.
+func publishGeometryToHub(wsHub *hub.Hub, geom *geometry.Geometry) {
+	data, err := protojson.Marshal(geom.Snapshot())
+	if err != nil {
+		slog.Error("marshalling geometry for websocket", "err", err)
+
+		return
+	}
+
+	wsHub.Publish(wrapperPacketTopic, data)
+}
+
+// runBackground runs task in its own goroutine tracked by wg, logging its
+// error unless it is the expected result of ctx being cancelled.
+func runBackground(wg *sync.WaitGroup, name string, task func() error) {
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		if err := task(); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error(name+" stopped", "err", err)
+		}
+	}()
+}
+
+// splitInterfaces turns the comma separated flag value into a slice, or nil
+// when the flag is unset -- an unset flag must not become []string{""}.
+func splitInterfaces(flagValue string) []string {
+	if flagValue == "" {
+		return nil
+	}
+
+	return strings.Split(flagValue, ",")
 }
 
 func formattedAddress() string {

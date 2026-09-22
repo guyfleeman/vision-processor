@@ -3,15 +3,45 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/geometry"
+	"github.com/RoboCup-SSL/ssl-vision-processor/gui/internal/hub"
 )
+
+// testServer loads a *copy* of the fixture, never testdata/geometry.yml
+// directly -- the /api/geometry/field PUT handler writes back to whatever
+// path Geometry was loaded from, and would otherwise rewrite a tracked file
+// on every test run.
+func testServer(t *testing.T) http.Handler {
+	t.Helper()
+
+	src, err := os.ReadFile("testdata/geometry.yml")
+	if err != nil {
+		t.Fatalf("ReadFile fixture: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "geometry.yml")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	geom, err := geometry.New(path)
+	if err != nil {
+		t.Fatalf("geometry.New: %v", err)
+	}
+
+	return NewVisionServer(geom, hub.New(), t.TempDir())
+}
 
 func TestHealthReturnsOK(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 
-	NewVisionServer().ServeHTTP(rec, req)
+	testServer(t).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -27,6 +57,111 @@ func TestHealthReturnsOK(t *testing.T) {
 	}
 }
 
+func TestGeometryReturnsProtojson(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/geometry", nil)
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+
+	if !strings.Contains(rec.Body.String(), `"fieldLength"`) {
+		t.Errorf("body = %q, want it to contain fieldLength", rec.Body.String())
+	}
+}
+
+func TestGetFieldConfigReturnsCurrentValues(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/geometry/field", nil)
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	if !strings.Contains(rec.Body.String(), `"fieldLength"`) || !strings.Contains(rec.Body.String(), `"optionalFieldLines"`) {
+		t.Errorf("body = %q, want fieldLength and optionalFieldLines", rec.Body.String())
+	}
+}
+
+func TestPutFieldConfigUpdatesAndPersists(t *testing.T) {
+	srv := testServer(t)
+
+	body := strings.NewReader(`{
+		"field": {"fieldLength": 2160, "fieldWidth": 1680, "goalWidth": 280, "goalDepth": 50, "boundaryWidth": 100, "lineThickness": 10},
+		"optionalFieldLines": {"halfway": true, "penalty": true}
+	}`)
+
+	putReq := httptest.NewRequest(http.MethodPut, "/api/geometry/field", body)
+	putRec := httptest.NewRecorder()
+	srv.ServeHTTP(putRec, putReq)
+
+	if putRec.Code != http.StatusNoContent {
+		t.Fatalf("PUT status = %d, want %d, body: %s", putRec.Code, http.StatusNoContent, putRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/geometry/field", nil)
+	getRec := httptest.NewRecorder()
+	srv.ServeHTTP(getRec, getReq)
+
+	if !strings.Contains(getRec.Body.String(), `"fieldLength":2160`) {
+		t.Errorf("after PUT, GET returned %q, want it to reflect the update", getRec.Body.String())
+	}
+}
+
+// A zero/negative dimension is the caller's mistake -- 400, not a 500, and
+// must not silently write anything to disk.
+func TestPutFieldConfigRejectsInvalidDimensions(t *testing.T) {
+	srv := testServer(t)
+
+	body := strings.NewReader(`{"field": {"fieldLength": 0}, "optionalFieldLines": {}}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/geometry/field", body)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPutFieldConfigRejectsMalformedJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/api/geometry/field", strings.NewReader(`not json`))
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// The preset endpoint reads the real repo-root files -- this test runs from
+// cmd/ssl-vision-processor-gui, so it doesn't see them and both are skipped.
+// It's still worth asserting the endpoint degrades to an empty list rather
+// than failing outright when a preset can't be read.
+func TestGetFieldPresetsDegradesGracefullyWhenFilesAreMissing(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/geometry/presets", nil)
+	rec := httptest.NewRecorder()
+
+	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	if strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("body = %q, want an empty array (no presets reachable from this cwd)", rec.Body.String())
+	}
+}
+
 // A wrong method is a 404 rather than a 405: the "/" catch-all matches every
 // method, so ServeMux never reaches its method-not-allowed path. What matters is
 // that the "/api/" subtree answers, instead of the request falling through to
@@ -36,7 +171,7 @@ func TestHealthRejectsNonGET(t *testing.T) {
 		req := httptest.NewRequest(method, "/api/health", nil)
 		rec := httptest.NewRecorder()
 
-		NewVisionServer().ServeHTTP(rec, req)
+		testServer(t).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s /api/health = %d, want %d", method, rec.Code, http.StatusNotFound)
@@ -51,7 +186,7 @@ func TestUnknownAPIPathReturns404(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
 	rec := httptest.NewRecorder()
 
-	NewVisionServer().ServeHTTP(rec, req)
+	testServer(t).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
@@ -68,7 +203,7 @@ func TestUnknownPathServesApp(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/instances/cam0/calibration", nil)
 	rec := httptest.NewRecorder()
 
-	NewVisionServer().ServeHTTP(rec, req)
+	testServer(t).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)

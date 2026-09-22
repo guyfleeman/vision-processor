@@ -34,28 +34,26 @@ jobs:
             make -C build -j"$(nproc)" vision_processor geometry_benchmark blob_benchmark
           '
 
-  python:
-    name: Python (wrapper_backend)
+  gui-go:
+    name: Go (gui)
     runs-on: ubuntu-latest
     steps:
+      # No submodule checkout: gui/internal/{vision,gamecontroller} are
+      # generated Go bindings committed to the tree (see gui/buf.gen.yaml);
+      # only `make proto` touches the proto/ submodule.
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      # Importing wrapper_backend runs protoc against the submodule and
-      # generates wrapper_backend/proto/, which mypy needs on its path even
-      # though it excludes the generated files themselves.
-      - name: Lint and type check
+      - name: Format, vet, test
         run: |
           nix develop --command bash -c '
-            uv sync --locked
-            uv run python -c "import wrapper_backend"
-            uv run ruff check wrapper_backend/
-            uv run ruff format --check wrapper_backend/
-            uv run mypy
+            cd gui
+            test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+            go vet ./cmd/... ./internal/... ./frontend
+            go build ./cmd/... ./internal/... ./frontend
+            go test ./cmd/... ./internal/... ./frontend -race
           '
 
   frontend:
