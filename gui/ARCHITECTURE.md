@@ -114,7 +114,7 @@ sequenceDiagram
 
     Browser->>GUI: PUT /api/config/line-corners
     GUI->>Config: splice geometry.line_corners, goal_side_marker
-    Note over VP: reloadConfigIfChanged() picks up<br/>the edit on its next frame
+    Note over VP: geometry: is only read at startup,<br/>not by reloadConfigIfChanged() -- restart required
     VP->>VP: geometryCalibration()
     VP-->>GUI: SSL_GeometryData (multicast)
     GUI->>GUI: Absorb(calib)
@@ -125,6 +125,11 @@ sequenceDiagram
 ships full of comments and commented out example values meant for a human to read, and a decode and re-encode
 round trip through the YAML library does not reliably preserve those. A line based splice touches only the two
 keys it is asked to set.
+
+The `geometry:` section is only read once, when `Resources` is constructed at process startup
+(`src/Resources.cpp`). `reloadConfigIfChanged()` hot reloads `thresholds`, `tracking`, `color`, and `debug` every
+half second, but never `geometry`, `camera`, `network`, or `stream`. A corner saved through this endpoint has no
+effect until the target vision_processor instance is restarted.
 
 ## HTTP API
 
