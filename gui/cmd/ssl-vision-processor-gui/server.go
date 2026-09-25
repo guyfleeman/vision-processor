@@ -12,13 +12,14 @@ import (
 )
 
 type VisionServer struct {
-	geometry *geometry.Geometry
-	hub      *hub.Hub
-	imgDir   string
+	geometry   *geometry.Geometry
+	hub        *hub.Hub
+	imgDir     string
+	configFile string
 }
 
-func NewVisionServer(geom *geometry.Geometry, wsHub *hub.Hub, imgDir string) http.Handler {
-	s := &VisionServer{geometry: geom, hub: wsHub, imgDir: imgDir}
+func NewVisionServer(geom *geometry.Geometry, wsHub *hub.Hub, imgDir, configFile string) http.Handler {
+	s := &VisionServer{geometry: geom, hub: wsHub, imgDir: imgDir, configFile: configFile}
 
 	mux := http.NewServeMux()
 	s.addRoutes(mux)
@@ -189,6 +190,77 @@ func (s *VisionServer) handlePostLoad() http.HandlerFunc {
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("writing load response", "err", err)
 		}
+	}
+}
+
+type lineCornersRequest struct {
+	Corners []geometry.Corner `json:"corners"`
+	// GoalSideMarker is 1-based, matching the corner picker's on-screen
+	// number for whichever marker was chosen as the goal-side corner.
+	GoalSideMarker int `json:"goalSideMarker"`
+}
+
+// handleGetLineCorners reads back whatever was last written to the
+// instance's config.yml (see geometry.ReadLineCorners), so the corner picker
+// can restore its markers instead of always starting from the default inset
+// rectangle. A file with nothing saved yet -- or that can't be read at all --
+// degrades to an empty response rather than an error: not being calibrated
+// yet is the normal state, not a failure.
+func (s *VisionServer) handleGetLineCorners() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		corners, marker, err := geometry.ReadLineCorners(s.configFile)
+		if err != nil {
+			slog.Warn("no existing line corners to load", "path", s.configFile, "err", err)
+
+			corners, marker = nil, 0
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		resp := lineCornersRequest{Corners: corners, GoalSideMarker: marker}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Error("writing line corners response", "err", err)
+		}
+	}
+}
+
+// handlePutLineCorners writes the corner picker's calibration hint into the
+// instance's own config.yml (geometry.line_corners) -- see
+// geometry.WriteLineCorners. This isn't part of the shared field template
+// (Geometry/geometry.yml); it's a stand-in for the not-yet-built
+// internal/config (see gui/CLAUDE.md's "Not yet built"), kept in
+// internal/geometry for now since it's already of immediate use.
+func (s *VisionServer) handlePutLineCorners() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req lineCornersRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "malformed request body: "+err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		if len(req.Corners) != 4 {
+			http.Error(w, "corners: exactly 4 required", http.StatusBadRequest)
+
+			return
+		}
+
+		if req.GoalSideMarker < 1 || req.GoalSideMarker > len(req.Corners) {
+			http.Error(w, "goalSideMarker: must identify one of the given corners", http.StatusBadRequest)
+
+			return
+		}
+
+		// s.configFile is server config, not part of the request -- a
+		// failure here is our problem, not the caller's, so 500.
+		if err := geometry.WriteLineCorners(s.configFile, req.Corners, req.GoalSideMarker); err != nil {
+			slog.Error("writing line corners", "path", s.configFile, "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

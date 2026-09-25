@@ -34,7 +34,41 @@ func testServer(t *testing.T) http.Handler {
 		t.Fatalf("geometry.New: %v", err)
 	}
 
-	return NewVisionServer(geom, hub.New(), t.TempDir())
+	return NewVisionServer(geom, hub.New(), t.TempDir(), filepath.Join(t.TempDir(), "config.yml"))
+}
+
+// testServerWithConfig is testServer plus a real, writable copy of
+// testdata/config.yml -- for the line-corners tests, which need to read back
+// what was written.
+func testServerWithConfig(t *testing.T) (http.Handler, string) {
+	t.Helper()
+
+	geomSrc, err := os.ReadFile("testdata/geometry.yml")
+	if err != nil {
+		t.Fatalf("ReadFile geometry fixture: %v", err)
+	}
+
+	geomPath := filepath.Join(t.TempDir(), "geometry.yml")
+	if err := os.WriteFile(geomPath, geomSrc, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	geom, err := geometry.New(geomPath)
+	if err != nil {
+		t.Fatalf("geometry.New: %v", err)
+	}
+
+	configSrc, err := os.ReadFile("testdata/config.yml")
+	if err != nil {
+		t.Fatalf("ReadFile config fixture: %v", err)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, configSrc, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	return NewVisionServer(geom, hub.New(), t.TempDir(), configPath), configPath
 }
 
 func TestHealthReturnsOK(t *testing.T) {
@@ -241,6 +275,118 @@ func TestLoadOfAMissingFileReturns400(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	testServer(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestGetLineCornersReturnsWhatWasWritten(t *testing.T) {
+	srv, _ := testServerWithConfig(t)
+
+	putBody := strings.NewReader(`{"corners": [{"x":1,"y":2},{"x":3,"y":4},{"x":5,"y":6},{"x":7,"y":8}], "goalSideMarker": 2}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/api/config/line-corners", putBody)
+	putRec := httptest.NewRecorder()
+	srv.ServeHTTP(putRec, putReq)
+
+	if putRec.Code != http.StatusNoContent {
+		t.Fatalf("PUT status = %d, want %d, body: %s", putRec.Code, http.StatusNoContent, putRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config/line-corners", nil)
+	getRec := httptest.NewRecorder()
+	srv.ServeHTTP(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d, body: %s", getRec.Code, http.StatusOK, getRec.Body.String())
+	}
+
+	body := getRec.Body.String()
+	if !strings.Contains(body, `"x":1`) || !strings.Contains(body, `"goalSideMarker":2`) {
+		t.Errorf("GET body = %q, want it to reflect the PUT", body)
+	}
+}
+
+func TestGetLineCornersDegradesGracefullyWithNothingSavedYet(t *testing.T) {
+	// testServer's configFile path doesn't exist at all.
+	srv := testServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/line-corners", nil)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	if !strings.Contains(rec.Body.String(), `"goalSideMarker":0`) {
+		t.Errorf("body = %q, want a zero-value response", rec.Body.String())
+	}
+}
+
+func TestPutLineCornersWritesToConfigFile(t *testing.T) {
+	srv, configPath := testServerWithConfig(t)
+
+	body := strings.NewReader(`{"corners": [{"x":1,"y":2},{"x":3,"y":4},{"x":5,"y":6},{"x":7,"y":8}], "goalSideMarker": 3}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/config/line-corners", body)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	if !strings.Contains(string(got), "- [1, 2]") {
+		t.Errorf("config.yml was not updated: %s", got)
+	}
+
+	if !strings.Contains(string(got), "goal_side_marker: 3") {
+		t.Errorf("goal_side_marker was not recorded: %s", got)
+	}
+}
+
+func TestPutLineCornersRejectsAnOutOfRangeGoalSideMarker(t *testing.T) {
+	srv, _ := testServerWithConfig(t)
+
+	body := strings.NewReader(`{"corners": [{"x":1,"y":2},{"x":3,"y":4},{"x":5,"y":6},{"x":7,"y":8}], "goalSideMarker": 5}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/config/line-corners", body)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPutLineCornersRejectsTheWrongCornerCount(t *testing.T) {
+	srv, _ := testServerWithConfig(t)
+
+	body := strings.NewReader(`{"corners": [{"x":1,"y":2}]}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/config/line-corners", body)
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPutLineCornersRejectsMalformedJSON(t *testing.T) {
+	srv, _ := testServerWithConfig(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config/line-corners", strings.NewReader(`not json`))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)

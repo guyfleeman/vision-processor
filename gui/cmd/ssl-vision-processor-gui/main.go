@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,6 +33,13 @@ var skipInterfaces = flag.String("skipInterfaces", "", "Comma separated list of 
 var geometryFile = flag.String("geometryFile", "geometry.yml", "Field geometry config file, default: geometry.yml")
 var geometryPreset = flag.String("geometryPreset", "geometry-divB.yml", "Preset to seed -geometryFile from if it doesn't exist yet, default: geometry-divB.yml")
 var imgDir = flag.String("imgDir", "img", "Directory the vision processor writes debug snapshot images to, default: img")
+
+// The vision_processor instance's own config file -- distinct from
+// -geometryFile (the shared field template). Matches vision_processor's own
+// default (argv[1] falling back to "config.yml", see src/main.cpp). Assumes
+// a single, same-host instance, same as -imgDir; see gui/CLAUDE.md's
+// "internal/discovery"/"internal/config" notes for the multi-instance plan.
+var configFile = flag.String("configFile", "config.yml", "vision_processor instance config file to write calibration values into, default: config.yml")
 var logLevelFlag = flag.String("logLevel", "Info", "Log Level: Debug, Info, Warn, Error. Default: Info")
 var logFile = flag.String("logFile", "logs/vision-processor-gui.log", "Rotating log file to write alongside stderr, empty to disable. Default: logs/vision-processor-gui.log")
 
@@ -98,7 +106,7 @@ func run() int {
 
 	srv := &http.Server{
 		Addr:              *address,
-		Handler:           NewVisionServer(geom, wsHub, *imgDir),
+		Handler:           NewVisionServer(geom, wsHub, *imgDir, *configFile),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -113,7 +121,7 @@ func run() int {
 		}
 	}()
 
-	slog.Info("UI is available", "url", formattedAddress())
+	slog.Info("UI is available", "url", formattedAddress(*address))
 
 	<-ctx.Done()
 
@@ -205,10 +213,43 @@ func splitInterfaces(flagValue string) []string {
 	return strings.Split(flagValue, ",")
 }
 
-func formattedAddress() string {
-	if strings.HasPrefix(*address, ":") {
-		return "http://localhost" + *address
+// formattedAddress turns -address into a URL a person can actually open. A
+// bind-all host (empty, "0.0.0.0", "::") isn't itself reachable -- printing
+// the LAN-facing IP instead of "localhost" is what makes this useful to
+// someone else on the venue network, not just the machine running it.
+// localhost is only the fallback if that IP can't be determined.
+func formattedAddress(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
 	}
 
-	return "http://" + *address
+	if host != "" && host != "0.0.0.0" && host != "::" {
+		return "http://" + net.JoinHostPort(host, port)
+	}
+
+	if ip, err := outboundIP(); err == nil {
+		return "http://" + net.JoinHostPort(ip, port)
+	}
+
+	return "http://" + net.JoinHostPort("localhost", port)
+}
+
+// outboundIP reports this host's IP as seen by external routing. Dialing UDP
+// doesn't send a packet, just consults the routing table for which local
+// interface/address would be used -- so this works without real
+// connectivity, only a route to the internet.
+func outboundIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return "", fmt.Errorf("unexpected local address type %T", conn.LocalAddr())
+	}
+
+	return addr.IP.String(), nil
 }

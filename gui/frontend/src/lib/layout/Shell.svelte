@@ -21,7 +21,7 @@
   <header>
     <h1>vision-processor</h1>
     <span class="badge" data-state={$connectionState}>
-      {$connectionState}
+      {$connectionState.toUpperCase()} ({location.host})
     </span>
   </header>
 

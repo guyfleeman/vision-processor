@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+
   // Hacky first pass at the corner-drag picker from the calibration UI plan.
   // Web-only: no C++ changes, camera hardcoded to 0 (no camera selector yet).
   //
@@ -76,6 +78,7 @@
       x: Math.round(Math.max(0, Math.min(imageWidth, p.x))),
       y: Math.round(Math.max(0, Math.min(imageHeight, p.y))),
     };
+    savedAt = null;
   }
 
   function endDrag(): void {
@@ -101,6 +104,76 @@
         .map((c) => `- [${String(c.x)}, ${String(c.y)}]`)
         .join("\n"),
   );
+
+  let saving = $state(false);
+  let saveError = $state<string | null>(null);
+  let savedAt = $state<number | null>(null);
+
+  // The label/stroke sizes below are SVG user-space units, i.e. image
+  // pixels (viewBox == the image's natural size) -- not screen pixels. They
+  // must scale with image resolution the same way the handle radius already
+  // does, or they shrink toward invisible on a higher-res camera feed than
+  // whatever this was last tuned against.
+  let handleRadius = $derived(Math.max(imageWidth, imageHeight) * 0.015);
+  let handleStrokeWidth = $derived(handleRadius * 0.2);
+  let labelFontSize = $derived(handleRadius * 2.5);
+  let labelDy = $derived(-(handleRadius * 1.8));
+  let labelStrokeWidth = $derived(handleRadius * 0.3);
+
+  // Load whatever was last saved so a reload shows the real calibration
+  // instead of always resetting to the default inset rectangle. Only applied
+  // if nothing's been placed yet (corners.length === 0) and the file has a
+  // full set of 4 -- a partial/absent save just leaves the default in place.
+  onMount(() => {
+    void loadExistingLineCorners();
+  });
+
+  async function loadExistingLineCorners(): Promise<void> {
+    try {
+      const response = await fetch("/api/config/line-corners");
+      if (!response.ok) return;
+
+      const data = (await response.json()) as {
+        corners?: { x: number; y: number }[];
+      };
+
+      // saveLineCorners always sends the origin corner first (see
+      // orderedCorners) -- what comes back is that same saved order, so the
+      // origin is always index 0 here. goalSideMarker is not it: that's the
+      // *original*, pre-reorder marker number, kept only as a record in
+      // config.yml, and doesn't describe this already-reordered array.
+      if (corners.length === 0 && data.corners?.length === 4) {
+        corners = data.corners;
+        originIndex = 0;
+      }
+    } catch {
+      // Nothing saved yet, or it couldn't be read -- the default inset
+      // rectangle is a fine starting point.
+    }
+  }
+
+  async function saveLineCorners(): Promise<void> {
+    saving = true;
+    saveError = null;
+
+    try {
+      const response = await fetch("/api/config/line-corners", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          corners: orderedCorners,
+          goalSideMarker: originIndex + 1,
+        }),
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+      savedAt = Date.now();
+    } catch (err) {
+      saveError = err instanceof Error ? err.message : String(err);
+    } finally {
+      saving = false;
+    }
+  }
 </script>
 
 <section class="corner-picker">
@@ -139,7 +212,8 @@
           <circle
             cx={corner.x}
             cy={corner.y}
-            r={Math.max(imageWidth, imageHeight) * 0.015}
+            r={handleRadius}
+            stroke-width={handleStrokeWidth}
             class="handle"
             class:origin={index === originIndex}
             onpointerdown={(e) => {
@@ -149,7 +223,9 @@
           <text
             x={corner.x}
             y={corner.y}
-            dy={-12}
+            dy={labelDy}
+            font-size={labelFontSize}
+            stroke-width={labelStrokeWidth}
             role="button"
             tabindex="0"
             onclick={() => {
@@ -174,6 +250,22 @@
   </div>
 
   <pre>{yamlSnippet}</pre>
+
+  <div class="save-row">
+    <button
+      type="button"
+      onclick={saveLineCorners}
+      disabled={saving || orderedCorners.length !== 4}
+    >
+      {saving ? "Saving..." : "Save to config.yml"}
+    </button>
+    {#if savedAt}
+      <span class="saved">Saved.</span>
+    {/if}
+    {#if saveError}
+      <span class="error">Error: {saveError}</span>
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -205,7 +297,6 @@
   .handle {
     fill: orange;
     stroke: black;
-    stroke-width: 2;
     cursor: grab;
   }
 
@@ -219,11 +310,9 @@
 
   text {
     fill: white;
-    font-size: 20px;
     text-anchor: middle;
     paint-order: stroke;
     stroke: black;
-    stroke-width: 3px;
     cursor: pointer;
   }
 
@@ -245,5 +334,22 @@
     color: #888;
     font-size: 0.8rem;
     font-style: italic;
+  }
+
+  .save-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .saved {
+    color: #1b5e20;
+    font-size: 0.85rem;
+  }
+
+  .error {
+    color: #b00020;
+    font-size: 0.85rem;
   }
 </style>

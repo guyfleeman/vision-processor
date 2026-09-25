@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { topic } from "./lib/wrapper-bus";
   import Shell from "./lib/layout/Shell.svelte";
+  import { nav } from "./lib/layout/nav.svelte";
 
   let subscribed = $state(false);
   const wrapperPacket = topic<Record<string, unknown>>("wrapper_packet.out");
@@ -13,6 +14,16 @@
   }
   let snapshots = $state<Snapshot[]>([]);
   let cacheBuster = $state(0);
+
+  // flat/gradient/blob are ball-detection debug views (see src/main.cpp) --
+  // color-tuning territory, not relevant to a geometry calibration.
+  const COLOR_ONLY_VIEWS = new Set(["flat", "gradient", "blob"]);
+
+  let visibleSnapshots = $derived(
+    nav.selectedCategoryId === "geometry"
+      ? snapshots.filter((s) => !COLOR_ONLY_VIEWS.has(s.view))
+      : snapshots,
+  );
 
   async function refreshSnapshotList(): Promise<void> {
     try {
@@ -54,24 +65,26 @@
       Temporary debug utilities -- see the note in this file's source.
     </p>
 
-    <section>
-      <h2>Snapshots</h2>
-      {#if snapshots.length === 0}
-        <p class="hint">No images in img/ yet.</p>
-      {:else}
-        <div class="grid">
-          {#each snapshots as snap (`${snap.cam_id}.${snap.view}`)}
-            <figure>
-              <img
-                src={`/api/snapshot/${snap.cam_id}/${snap.view}?t=${String(cacheBuster)}`}
-                alt={`cam ${snap.cam_id} ${snap.view}`}
-              />
-              <figcaption>cam {snap.cam_id} / {snap.view}</figcaption>
-            </figure>
-          {/each}
-        </div>
-      {/if}
-    </section>
+    {#if nav.selectedCategoryId !== "field"}
+      <section>
+        <h2>Snapshots</h2>
+        {#if visibleSnapshots.length === 0}
+          <p class="hint">No images in img/ yet.</p>
+        {:else}
+          <div class="grid">
+            {#each visibleSnapshots as snap (`${snap.cam_id}.${snap.view}`)}
+              <figure>
+                <img
+                  src={`/api/snapshot/${snap.cam_id}/${snap.view}?t=${String(cacheBuster)}`}
+                  alt={`cam ${snap.cam_id} ${snap.view}`}
+                />
+                <figcaption>cam {snap.cam_id} / {snap.view}</figcaption>
+              </figure>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {/if}
 
     <section>
       <button onclick={toggleSubscribe}>

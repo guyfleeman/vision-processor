@@ -103,6 +103,17 @@ filesystem.** This is unchanged from the Python `snapshot.py` it replaces and
 is a known limitation, not an oversight -- it does not work once vision
 processors run on other hosts. See "Not yet built."
 
+**`internal/geometry.WriteLineCorners` edits vision_processor's per-instance
+`config.yml` as text, not as decoded/re-encoded YAML.** That file ships full
+of comments and commented-out example values meant to be hand-read; a
+decode/re-encode round trip through `gopkg.in/yaml.v3` (confirmed while
+building this) drops comments elsewhere in the document and drifts
+indentation. A line-based splice around the `line_corners:` key touches
+nothing else. This is a stand-in for the not-yet-built `internal/config`
+(single, same-host instance, matching `-imgDir`'s assumption) -- see "Not yet
+built" -- kept in `internal/geometry` for now since the corner picker needed
+it working immediately; move it if/when `internal/config` exists.
+
 **buf reads the proto submodule directly**: `inputs: [{directory:
 ../proto/proto}]` in `buf.gen.yaml`. No vendored copy to drift. Generated
 output is committed (Nix builds are sandboxed/offline, so `make proto` cannot
