@@ -20,8 +20,13 @@ managed:
     - file_option: go_package_prefix
       value: github.com/RoboCup-SSL/ssl-vision-processor/gui/internal
 
+# Local plugins, not buf.build remotes: generation needs no network beyond the
+# already-checked-out proto/ submodule. Versions come from go.mod's `tool`
+# directive and frontend/package.json's devDependency, not a pin here, so
+# generated code never drifts from whatever protobuf runtime version the rest
+# of the code actually builds against.
 plugins:
-  - remote: buf.build/protocolbuffers/go:v1.36.6
+  - local: [go, tool, protoc-gen-go]
     out: internal
     opt:
       - paths=source_relative
@@ -29,7 +34,7 @@ plugins:
   # json_types emits the canonical protojson shape of each message, which is
   # what the Go side sends over the wire. 64-bit fields come out as strings
   # there, and these types say so.
-  - remote: buf.build/bufbuild/es:v2.2.5
+  - local: ./frontend/node_modules/.bin/protoc-gen-es
     out: frontend/src/proto
     opt:
       - target=ts

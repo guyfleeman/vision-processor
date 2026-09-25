@@ -13,7 +13,8 @@ Two options:
 
 ```
 # Standalone dev server with HMR (proxies /api and /ws to the Go host on :8085)
-cd gui/frontend
+cd gui && make proto   # regenerates src/proto -- not committed to git, see gui/CLAUDE.md
+cd frontend
 npm install
 npm run dev
 ```

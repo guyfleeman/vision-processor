@@ -38,10 +38,13 @@ jobs:
     name: Go (gui)
     runs-on: ubuntu-latest
     steps:
-      # No submodule checkout: gui/internal/{vision,gamecontroller} are
-      # generated Go bindings committed to the tree (see gui/buf.gen.yaml);
-      # only `make proto` touches the proto/ submodule.
+      # gui/internal/{vision,gamecontroller} are generated, not committed (see
+      # gui/buf.gen.yaml) -- the proto/ submodule and a `buf generate` (via
+      # `make .proto`, local plugins, no network needed) are needed before
+      # anything here builds.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
@@ -50,6 +53,7 @@ jobs:
         run: |
           nix develop --command bash -c '
             cd gui
+            make .proto
             test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
             go vet ./cmd/... ./internal/... ./frontend
             go build ./cmd/... ./internal/... ./frontend
@@ -59,24 +63,23 @@ jobs:
   frontend:
     name: Frontend (gui/frontend)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: gui/frontend
     steps:
+      # frontend/src/proto is generated, not committed (see gui/buf.gen.yaml)
+      # -- this job now needs the proto/ submodule and buf/go (hence nix,
+      # same as gui-go) to produce it before npm can build against it.
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: gui/frontend/package-lock.json
+          submodules: recursive
 
-      - run: npm ci
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - run: npm run lint
-
-      - run: npm run format:check
-
-      - run: npm run check
-
-      - run: npm run build
+      - name: Lint, check, build
+        run: |
+          nix develop --command bash -c '
+            cd gui && make .proto && cd frontend
+            npm run lint
+            npm run format:check
+            npm run check
+            npm run build
+          '

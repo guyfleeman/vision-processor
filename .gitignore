@@ -3,6 +3,9 @@
 /src/cl_kernels.S
 /src/proto
 /python/proto
+/gui/internal/vision
+/gui/internal/gamecontroller
+/gui/frontend/src/proto
 __pycache__
 
 # Cam viewer
@@ -20,8 +23,9 @@ geometry_benchmark
 /gui/bin
 /gui/ssl-vision-processor-gui
 
-# Makefile sentinel for the frontend build
+# Makefile sentinels for the frontend build and protobuf codegen
 /gui/.frontend
+/gui/.proto
 
 #CMake files
 /build

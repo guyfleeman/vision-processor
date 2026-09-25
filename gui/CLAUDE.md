@@ -14,12 +14,21 @@ which still import it directly — do not delete `geom_publisher.py`.
 All run from `gui/`.
 
 ```
-make run       # build frontend, run the Go host on :8085
+make run       # regenerate proto, build frontend, run the Go host on :8085
 make test      # frontend check/lint/format + go test -race, all packages
 make install   # go install after a frontend build
-make proto     # buf generate: needs network, never run from a sandboxed build
-make clean     # wipe dist/ and the frontend-build sentinel
+make proto     # regenerate internal/{vision,gamecontroller} and frontend/src/proto
+make clean     # wipe dist/, internal/{vision,gamecontroller}, frontend/src/proto
 ```
+
+`proto` (and by extension `run`/`test`/`install`, which all depend on it)
+needs `git submodule update --init` to have been run at least once, but no
+network beyond that: `buf generate`'s two plugins are both local, not
+buf.build remotes. Not using `nix develop`? You need `buf` itself, plus:
+`go get -tool google.golang.org/protobuf/cmd/protoc-gen-go` (records the
+version in `go.mod`; already a direct dependency so this needs no extra
+network fetch) and `npm ci` in `frontend/` (installs `@bufbuild/protoc-gen-es`
+from `package.json`).
 
 ```
 cd frontend && npm run dev   # Vite HMR on :5173, proxies /api and /ws to :8085
@@ -35,9 +44,10 @@ internal/
   hub/         topic pub/sub + the /ws handler
   snapshot/    debug image listing/serving
   logging/     slog setup: tint console + lumberjack file
-  vision/      generated Go protobuf (DO NOT EDIT, see buf.gen.yaml)
-  gamecontroller/  generated Go protobuf
+  vision/      generated Go protobuf, not committed -- run `make proto` (DO NOT EDIT)
+  gamecontroller/  generated Go protobuf, not committed
 frontend/      Svelte 5 + TypeScript + Vite, embedded via //go:embed
+               (src/proto/ is generated, not committed)
 buf.gen.yaml   generates both internal/{vision,gamecontroller} and
                frontend/src/proto from ../proto/proto (the submodule, read
                directly -- no vendored copy)
@@ -116,10 +126,22 @@ it working immediately; move it if/when `internal/config` exists.
 
 **buf reads the proto submodule directly**: `inputs: [{directory:
 ../proto/proto}]` in `buf.gen.yaml`. No vendored copy to drift. Generated
-output is committed (Nix builds are sandboxed/offline, so `make proto` cannot
-run inside one); `gui/frontend/dist/.gitkeep` exists for the same reason on
-the frontend side -- `//go:embed` fails to compile if `dist/` doesn't exist,
-so a fresh clone with no `npm run build` yet must still be able to `go test`.
+output (`internal/vision`, `internal/gamecontroller`, `frontend/src/proto`) is
+*not* committed -- `buf.gen.yaml`'s plugins are both `local:` (`go tool
+protoc-gen-go`; `frontend/node_modules/.bin/protoc-gen-es`), not buf.build
+remotes, so `make proto` needs no network beyond the already-checked-out
+`proto/` submodule and runs as an ordinary Makefile prerequisite (a `.proto`
+sentinel, same technique as `.frontend` below) rather than a separate manual
+step. This used to be committed when the plugins were remote (buf.build
+codegen calls, real network dependency); switching to local plugins removed
+the reason to.
+
+`gui/frontend/dist/.gitkeep` exists for a similar but distinct reason on the
+frontend side -- `//go:embed` fails to compile if `dist/` doesn't exist, so a
+fresh clone with no `npm run build` yet must still be able to `go test`. That
+one stays committed: `dist/` is the frontend's actual build *output*, not
+codegen from a source of truth already in the tree, so there's nothing to
+regenerate it from without first running the build it's the output of.
 
 **Discovery is multicast-announce-based, config is host-owned** -- both
 still unimplemented; see below.

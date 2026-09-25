@@ -6,21 +6,39 @@ GO_PACKAGES = ./cmd/... ./internal/... ./frontend
 
 FRONTEND_SOURCES = $(shell find frontend -type f \
 	-not -path "frontend/node_modules/*" \
-	-not -path "frontend/dist/*")
+	-not -path "frontend/dist/*" \
+	-not -path "frontend/src/proto/*")
+
+PROTO_SOURCES = $(shell find ../proto/proto -type f 2>/dev/null)
 
 .PHONY: all frontend install test run proto clean
 
 all: install
 
+# Sentinel file: internal/vision, internal/gamecontroller and
+# frontend/src/proto are generated, not committed (see buf.gen.yaml and
+# .gitignore), so every Go and frontend target needs this to have run first.
+# Both of buf.gen.yaml's plugins are local (go tool protoc-gen-go;
+# frontend/node_modules/.bin/protoc-gen-es), so this needs no network beyond
+# the already-checked-out proto/ submodule -- npm ci runs first only to make
+# sure the protoc-gen-es binary exists before buf calls it.
+.proto: buf.gen.yaml go.mod $(PROTO_SOURCES)
+	cd frontend && npm ci
+	buf generate
+	touch .proto
+
+proto: .proto
+
 # Sentinel file, so npm reruns only when a frontend source is newer than the
 # last build. //go:embed resolves at compile time, which is why every Go target
-# below depends on this.
+# below depends on this. Depends on .proto first: the build imports the
+# generated frontend/src/proto types.
 #
 # `npm run build` empties dist/ first (Vite's emptyOutDir), which deletes
 # dist/.gitkeep along with any stale output. Restore it every time, or a build
 # run before a commit silently drops the tracked sentinel a fresh clone needs.
-.frontend: $(FRONTEND_SOURCES)
-	cd frontend && npm ci && npm run build
+.frontend: .proto $(FRONTEND_SOURCES)
+	cd frontend && npm run build
 	touch frontend/dist/.gitkeep
 	touch .frontend
 
@@ -36,12 +54,7 @@ test: frontend
 run: frontend
 	go run ./cmd/$(BINARY)
 
-# Regenerates Go and TypeScript protobuf bindings. Needs network access for
-# buf's remote plugins, so it never runs as part of a build.
-proto:
-	buf generate
-
 clean:
-	rm -rf frontend/dist .frontend
+	rm -rf frontend/dist frontend/src/proto internal/vision internal/gamecontroller .frontend .proto
 	mkdir -p frontend/dist
 	touch frontend/dist/.gitkeep
