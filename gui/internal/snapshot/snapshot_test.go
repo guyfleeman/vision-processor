@@ -53,6 +53,23 @@ func TestListFindsMatchingFilesAndSkipsOthers(t *testing.T) {
 	}
 }
 
+// GeomModel.cpp writes debug overlays as "<camId>.pixels.corner.png" and
+// "<camId>.pixels.refined.png" -- view itself contains a dot.
+func TestListHandlesADottedViewName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "0.pixels.corner.png")
+
+	entries, err := list(dir)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	want := Entry{CamID: "0", View: "pixels.corner"}
+	if len(entries) != 1 || entries[0] != want {
+		t.Fatalf("entries = %v, want [%v]", entries, want)
+	}
+}
+
 func TestListDedupesSameCameraAndView(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "0.raw.jpg")
@@ -128,6 +145,22 @@ func TestHandleGetServesTheMostRecentlyModifiedMatch(t *testing.T) {
 
 	if rec.Body.String() != "0.raw.png" {
 		t.Errorf("body = %q, want the newer file", rec.Body.String())
+	}
+}
+
+func TestHandleGetServesADottedViewName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "0.pixels.corner.png")
+
+	rec := httptest.NewRecorder()
+	snapshotMux(dir).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/snapshot/0/pixels.corner", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	if rec.Body.String() != "0.pixels.corner.png" {
+		t.Errorf("body = %q, want file contents", rec.Body.String())
 	}
 }
 

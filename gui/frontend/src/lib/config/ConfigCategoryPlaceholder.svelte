@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ConfigCategory } from "../layout/configCategories";
   import type { VisionInstance } from "../layout/nav.svelte";
+  import ConfigFieldList from "./ConfigFieldList.svelte";
 
   interface Props {
     category: ConfigCategory;
@@ -30,14 +31,7 @@
     below (see config.yml at the repo root for exact defaults/ranges).
   </p>
 
-  <dl>
-    {#each category.fields as field (field.name)}
-      <div class="field">
-        <dt>{field.name}</dt>
-        <dd>{field.comment}</dd>
-      </div>
-    {/each}
-  </dl>
+  <ConfigFieldList fields={category.fields} />
 </section>
 
 <style>
@@ -61,29 +55,6 @@
     border-radius: 4px;
     padding: 0.5rem 0.75rem;
     font-size: 0.8rem;
-  }
-
-  dl {
-    margin: 1rem 0 0;
-  }
-
-  .field {
-    display: flex;
-    gap: 1rem;
-    padding: 0.35rem 0;
-    border-bottom: 1px solid #eee;
-    font-size: 0.85rem;
-  }
-
-  dt {
-    flex: 0 0 12rem;
-    font-family: monospace;
-    font-weight: 600;
-  }
-
-  dd {
-    margin: 0;
-    color: #555;
   }
 
   code {

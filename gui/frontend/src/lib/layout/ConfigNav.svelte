@@ -8,6 +8,11 @@
   let instanceCategories = $derived(
     CONFIG_CATEGORIES.filter((c) => c.scope === "per-instance"),
   );
+
+  // Computed once, matching MainContent.svelte's own pattern for the same
+  // function, rather than calling selectedInstance() again at each of the
+  // template sites below.
+  let instance = $derived(selectedInstance());
 </script>
 
 <nav class="config-nav">
@@ -29,8 +34,8 @@
   </ul>
 
   <h2>
-    {#if selectedInstance()}
-      {selectedInstance()?.host} / cam {selectedInstance()?.cameraId}
+    {#if instance}
+      {instance.host} / cam {instance.cameraId}
     {:else}
       Per-instance (select one above)
     {/if}
@@ -41,7 +46,7 @@
         <button
           type="button"
           class:selected={category.id === nav.selectedCategoryId}
-          disabled={!selectedInstance()}
+          disabled={!instance}
           onclick={() => {
             nav.selectedCategoryId = category.id;
           }}

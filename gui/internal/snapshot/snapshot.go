@@ -16,11 +16,13 @@ import (
 	"sort"
 )
 
-// filename matches "<cam_id>.<view>.<ext>", e.g. "0.raw.jpg". Both captured
-// groups are also validated against this same character set before use in a
-// filepath.Glob, since Glob treats *, ?, and [ as metacharacters and an
-// unvalidated view name could turn a lookup into a directory listing.
-var filename = regexp.MustCompile(`^(\d+)\.([a-zA-Z0-9_-]+)\.(?:jpg|jpeg|png)$`)
+// filename matches "<cam_id>.<view>.<ext>", e.g. "0.raw.jpg" or
+// "0.pixels.corner.png" -- view itself may contain dots (GeomModel.cpp writes
+// "pixels.corner"/"pixels.refined"), so it's `.+`, not a restricted character
+// class. This only ever runs against real names returned by os.ReadDir, never
+// untrusted input, so there's no injection risk in being permissive here; see
+// validSegment below for the regex that actually guards a filepath.Glob call.
+var filename = regexp.MustCompile(`^(\d+)\.(.+)\.(?:jpg|jpeg|png)$`)
 
 // Entry identifies one available snapshot. Field names match what the
 // frontend already expects.
@@ -89,9 +91,12 @@ func list(dir string) ([]Entry, error) {
 }
 
 // validSegment matches one path-value component of a snapshot request: digits
-// for a camera id, or the same character set the filename itself uses for a
-// view name.
-var validSegment = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+// for a camera id, or a view name (which may contain dots, e.g.
+// "pixels.corner"). This guards untrusted URL input right before it reaches
+// filepath.Glob in latest() -- it excludes '/' (no escaping the single path
+// segment camID+"."+view+".*" is joined into) and Glob's own metacharacters
+// (*, ?, [, ]), which is what actually matters; dots are harmless here.
+var validSegment = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 // HandleGet serves the most recently written {camID}.{view}.* file in dir.
 func HandleGet(dir string) http.HandlerFunc {

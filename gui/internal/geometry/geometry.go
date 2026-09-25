@@ -129,12 +129,23 @@ func (g *Geometry) mergeCalib(camera *vision.SSL_GeometryCameraCalibration) bool
 	return true
 }
 
-// Run republishes via publish once per PublishInterval until ctx is cancelled.
+// Run publishes immediately, then republishes via publish once per
+// PublishInterval until ctx is cancelled. Publishing before the first wait
+// (not after) matters here: real vision_processor instances on the network
+// wait to receive the field-geometry template before they can calibrate, so
+// a restart of this host should hand it to them right away, not after an
+// extra idle PublishInterval.
 func (g *Geometry) Run(ctx context.Context, publish func([]byte)) error {
 	return g.run(ctx, PublishInterval, publish)
 }
 
 func (g *Geometry) run(ctx context.Context, interval time.Duration, publish func([]byte)) error {
+	// Skipped if ctx is already cancelled -- Run should do nothing and return
+	// immediately in that case, same as before this published up front.
+	if ctx.Err() == nil {
+		publish(g.Encoded())
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

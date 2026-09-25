@@ -85,6 +85,12 @@ Installation with PIP: `pip install protobuf pyyaml`
    If the calibration is unsuccessful, restart the geom_publisher for a new geometry calibration.
    For setups with multiple cameras it is recommended to tune the calibration by hand.
 
+Your own `config[X].yml`/`geometry[X].yml` files (camera or venue specific) are gitignored by
+default and won't be committed. Only the reference templates -- `config.yml`, `config-minimal.yml`,
+`geometry-divA.yml`, `geometry-divB.yml` -- are tracked; `gui/config.yml` and `gui/geometry.yml`
+(the GUI's own working copies, bootstrapped from these) are gitignored the same way. If you need to
+track a variant anyway, `git add -f` it.
+
 
 ## Troubleshooting
 

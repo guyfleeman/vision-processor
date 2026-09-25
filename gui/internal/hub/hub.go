@@ -54,18 +54,27 @@ func (h *Hub) Publish(topic string, data []byte) {
 	defer h.mu.Unlock()
 
 	for ch := range h.subs[topic] {
+		sendLatest(ch, data)
+	}
+}
+
+// sendLatest sends data on ch, dropping whatever unread value is already
+// queued rather than blocking or letting a backlog grow -- the drop-stale,
+// keep-latest guarantee this package makes wherever it multiplexes onto a
+// size-limited channel: a topic's own per-subscriber channel here, and (see
+// websocket.go's forwardTopic) a connection's shared outbound channel.
+func sendLatest(ch chan []byte, data []byte) {
+	select {
+	case ch <- data:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+
 		select {
 		case ch <- data:
 		default:
-			select {
-			case <-ch:
-			default:
-			}
-
-			select {
-			case ch <- data:
-			default:
-			}
 		}
 	}
 }

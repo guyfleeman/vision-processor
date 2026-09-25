@@ -113,8 +113,16 @@ func serveConnection(h *Hub, conn *websocket.Conn) {
 }
 
 // forwardTopic relays one hub topic's values onto outbound until the topic is
-// unsubscribed (the hub channel closes).
-func forwardTopic(topic string, ch <-chan []byte, outbound chan<- []byte) {
+// unsubscribed (the hub channel closes). outbound is shared across every
+// topic this connection subscribes to, so uses the same drop-stale,
+// keep-latest sendLatest as a topic's own per-subscriber channel -- a slow
+// connection sees the latest value across its subscriptions, never a growing
+// backlog of stale ones queued ahead of it. (Concurrent forwardTopic
+// goroutines for different topics may occasionally race on which one's stale
+// entry gets dropped when both find outbound full at once; sendLatest's
+// channel ops are safe for that, and the guarantee that matters -- no
+// unbounded backlog -- still holds either way.)
+func forwardTopic(topic string, ch <-chan []byte, outbound chan []byte) {
 	for data := range ch {
 		envelope, err := json.Marshal(serverMessage{Topic: topic, Data: data})
 		if err != nil {
@@ -122,13 +130,7 @@ func forwardTopic(topic string, ch <-chan []byte, outbound chan<- []byte) {
 			continue
 		}
 
-		select {
-		case outbound <- envelope:
-		default:
-			// This connection is behind; drop rather than block every other
-			// topic (and every other connection sharing the hub) on one slow
-			// client.
-		}
+		sendLatest(outbound, envelope)
 	}
 }
 

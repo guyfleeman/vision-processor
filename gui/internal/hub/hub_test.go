@@ -103,6 +103,29 @@ func TestSlowSubscriberSeesOnlyLatestValue(t *testing.T) {
 	}
 }
 
+// forwardTopic (websocket.go) shares one connection-wide channel across every
+// topic a client subscribes to, unlike Publish's per-subscriber channel --
+// sendLatest is what both rely on for the same drop-stale, keep-latest
+// guarantee, so it's worth testing directly against a channel with room for
+// more than one queued value, not just the size-1 case Publish/Subscribe use.
+func TestSendLatestDropsTheOldestQueuedValueWhenFull(t *testing.T) {
+	ch := make(chan []byte, 2)
+
+	sendLatest(ch, []byte("a"))
+	sendLatest(ch, []byte("b"))
+	sendLatest(ch, []byte("c")) // full (a, b): must drop "a", never silently drop "c" itself
+
+	var got []string
+	for len(ch) > 0 {
+		got = append(got, string(<-ch))
+	}
+
+	want := []string{"b", "c"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("queue ended up %v, want %v -- the newest value must never be the one dropped", got, want)
+	}
+}
+
 func TestConcurrentSubscribePublishUnsubscribe(t *testing.T) {
 	h := New()
 

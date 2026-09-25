@@ -16,6 +16,23 @@ __pycache__
 /test-data
 *.log
 
+# Device/venue-specific configs -- only the reference templates below are
+# tracked. Anything else matching config*.yml/geometry*.yml at the repo root
+# (config-camtest.yml, a real venue's calibration, ...) is a personal/local
+# working file per the README's config[X].yml/geometry[X].yml convention, not
+# shipped source -- `git add -A` has swept these in by accident before.
+/config*.yml
+/geometry*.yml
+!/config.yml
+!/config-minimal.yml
+!/geometry-divA.yml
+!/geometry-divB.yml
+
+# gui/'s own working copies of the above, bootstrapped from geometry-divB.yml
+# / vision_processor's own config.yml default -- same reasoning.
+/gui/config.yml
+/gui/geometry.yml
+
 #Output binaries
 vision_processor
 blob_benchmark

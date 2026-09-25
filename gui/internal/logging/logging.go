@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	defaultMaxSizeMB  = 50
-	defaultMaxBackups = 5
-	defaultMaxAgeDays = 14
+	rotateMaxSizeMB  = 50
+	rotateMaxBackups = 5
+	rotateMaxAgeDays = 14
 )
 
 // logLevel is package level so that an API handler can raise the level at
@@ -35,10 +35,6 @@ type Config struct {
 	// File is the rotating log file to write alongside stderr. Empty disables
 	// file logging entirely.
 	File string
-
-	MaxSizeMB  int
-	MaxBackups int
-	MaxAgeDays int
 }
 
 // SetLevel changes the level of every handler installed by Setup. Safe to call
@@ -101,9 +97,9 @@ func Setup(cfg Config) (func(), error) {
 		} else {
 			rotator := &lumberjack.Logger{
 				Filename:   cfg.File,
-				MaxSize:    orDefault(cfg.MaxSizeMB, defaultMaxSizeMB), // megabytes per file
-				MaxBackups: orDefault(cfg.MaxBackups, defaultMaxBackups),
-				MaxAge:     orDefault(cfg.MaxAgeDays, defaultMaxAgeDays), // days
+				MaxSize:    rotateMaxSizeMB, // megabytes per file
+				MaxBackups: rotateMaxBackups,
+				MaxAge:     rotateMaxAgeDays, // days
 				Compress:   false,
 			}
 			handlers = append(handlers, slog.NewTextHandler(rotator, &slog.HandlerOptions{
@@ -121,14 +117,6 @@ func Setup(cfg Config) (func(), error) {
 	slog.SetDefault(slog.New(multiHandler(handlers)))
 
 	return closeLog, setupErr
-}
-
-func orDefault(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-
-	return value
 }
 
 // colorSupported reports whether ANSI colour should be emitted to f. A pipe or

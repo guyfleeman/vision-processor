@@ -129,8 +129,17 @@
     { key: "penalty", label: "Penalty area" },
   ];
 
+  // virtualField is a module-level singleton, not component-local state --
+  // switching tabs away and back destroys and recreates this component
+  // (MainContent's {#if}/{:else if}), re-running onMount, but virtualField
+  // itself survives that unmount with whatever dirty edits were in progress.
+  // Reloading unconditionally would silently discard them; guard it exactly
+  // like handleLoad below does for the same class of data loss.
   onMount(() => {
-    void loadVirtualField();
+    if (!virtualField.dirty || confirm("Discard unsaved changes?")) {
+      void loadVirtualField();
+    }
+
     void loadFieldPresets();
   });
 

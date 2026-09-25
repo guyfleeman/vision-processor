@@ -1,5 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import {
+    lineCorners,
+    loadLineCorners,
+    saveLineCorners,
+  } from "./lineCorners.svelte";
 
   // Hacky first pass at the corner-drag picker from the calibration UI plan.
   // Web-only: no C++ changes, camera hardcoded to 0 (no camera selector yet).
@@ -18,8 +23,6 @@
   let imageWidth = $state(0);
   let imageHeight = $state(0);
 
-  // Default to an inset rectangle rather than the image edges, so all four
-  // handles are visible and draggable as soon as the image loads.
   let corners = $state<{ x: number; y: number }[]>([]);
 
   let svgEl: SVGSVGElement | undefined = $state();
@@ -29,20 +32,51 @@
   // to the first handle; click a different one to change it.
   let originIndex = $state(0);
 
+  // corners is seeded exactly once, from whichever of these two independent
+  // async sources (the <img> loading, the saved-corners fetch) finishes
+  // last -- not from whichever happens to win a race. Without this, a fast
+  // cached image load could seed the default rectangle before the fetch
+  // resolves, and the fetch would then see corners already non-empty and
+  // silently skip applying the user's real, already-saved calibration.
+  let imageReady = $state(false);
+  let fetchDone = $state(false);
+
   function handleImageLoad(img: HTMLImageElement): void {
     imageWidth = img.naturalWidth;
     imageHeight = img.naturalHeight;
+    imageReady = true;
+    maybeInitializeCorners();
+  }
 
-    if (corners.length === 0) {
-      const marginX = imageWidth * 0.15;
-      const marginY = imageHeight * 0.15;
-      corners = [
-        { x: marginX, y: marginY },
-        { x: imageWidth - marginX, y: marginY },
-        { x: imageWidth - marginX, y: imageHeight - marginY },
-        { x: marginX, y: imageHeight - marginY },
-      ];
+  onMount(() => {
+    void loadLineCorners().then(() => {
+      fetchDone = true;
+      maybeInitializeCorners();
+    });
+  });
+
+  // Saved corners take priority (already reordered with the goal-side corner
+  // first -- see saveLineCorners's callers below, so origin is always index
+  // 0). Otherwise, default to an inset rectangle so all four handles are
+  // visible and draggable immediately.
+  function maybeInitializeCorners(): void {
+    if (corners.length !== 0 || !imageReady || !fetchDone) return;
+
+    if (lineCorners.corners.length === 4) {
+      corners = lineCorners.corners;
+      originIndex = 0;
+
+      return;
     }
+
+    const marginX = imageWidth * 0.15;
+    const marginY = imageHeight * 0.15;
+    corners = [
+      { x: marginX, y: marginY },
+      { x: imageWidth - marginX, y: marginY },
+      { x: imageWidth - marginX, y: imageHeight - marginY },
+      { x: marginX, y: imageHeight - marginY },
+    ];
   }
 
   // Screen pixels -> SVG user-space (== image pixel space, since viewBox is
@@ -78,7 +112,7 @@
       x: Math.round(Math.max(0, Math.min(imageWidth, p.x))),
       y: Math.round(Math.max(0, Math.min(imageHeight, p.y))),
     };
-    savedAt = null;
+    lineCorners.savedAt = null;
   }
 
   function endDrag(): void {
@@ -105,10 +139,6 @@
         .join("\n"),
   );
 
-  let saving = $state(false);
-  let saveError = $state<string | null>(null);
-  let savedAt = $state<number | null>(null);
-
   // The label/stroke sizes below are SVG user-space units, i.e. image
   // pixels (viewBox == the image's natural size) -- not screen pixels. They
   // must scale with image resolution the same way the handle radius already
@@ -120,59 +150,8 @@
   let labelDy = $derived(-(handleRadius * 1.8));
   let labelStrokeWidth = $derived(handleRadius * 0.3);
 
-  // Load whatever was last saved so a reload shows the real calibration
-  // instead of always resetting to the default inset rectangle. Only applied
-  // if nothing's been placed yet (corners.length === 0) and the file has a
-  // full set of 4 -- a partial/absent save just leaves the default in place.
-  onMount(() => {
-    void loadExistingLineCorners();
-  });
-
-  async function loadExistingLineCorners(): Promise<void> {
-    try {
-      const response = await fetch("/api/config/line-corners");
-      if (!response.ok) return;
-
-      const data = (await response.json()) as {
-        corners?: { x: number; y: number }[];
-      };
-
-      // saveLineCorners always sends the origin corner first (see
-      // orderedCorners) -- what comes back is that same saved order, so the
-      // origin is always index 0 here. goalSideMarker is not it: that's the
-      // *original*, pre-reorder marker number, kept only as a record in
-      // config.yml, and doesn't describe this already-reordered array.
-      if (corners.length === 0 && data.corners?.length === 4) {
-        corners = data.corners;
-        originIndex = 0;
-      }
-    } catch {
-      // Nothing saved yet, or it couldn't be read -- the default inset
-      // rectangle is a fine starting point.
-    }
-  }
-
-  async function saveLineCorners(): Promise<void> {
-    saving = true;
-    saveError = null;
-
-    try {
-      const response = await fetch("/api/config/line-corners", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          corners: orderedCorners,
-          goalSideMarker: originIndex + 1,
-        }),
-      });
-
-      if (!response.ok) throw new Error(await response.text());
-      savedAt = Date.now();
-    } catch (err) {
-      saveError = err instanceof Error ? err.message : String(err);
-    } finally {
-      saving = false;
-    }
+  function handleSave(): void {
+    void saveLineCorners(orderedCorners, originIndex + 1);
   }
 </script>
 
@@ -254,16 +233,16 @@
   <div class="save-row">
     <button
       type="button"
-      onclick={saveLineCorners}
-      disabled={saving || orderedCorners.length !== 4}
+      onclick={handleSave}
+      disabled={lineCorners.saving || orderedCorners.length !== 4}
     >
-      {saving ? "Saving..." : "Save to config.yml"}
+      {lineCorners.saving ? "Saving..." : "Save to config.yml"}
     </button>
-    {#if savedAt}
+    {#if lineCorners.savedAt}
       <span class="saved">Saved.</span>
     {/if}
-    {#if saveError}
-      <span class="error">Error: {saveError}</span>
+    {#if lineCorners.error}
+      <span class="error">Error: {lineCorners.error}</span>
     {/if}
   </div>
 </section>

@@ -81,6 +81,29 @@ func (s *VisionServer) handleGetFieldConfig() http.HandlerFunc {
 	}
 }
 
+// respondGeometryErr classifies an error from a geometry package call and
+// writes the matching HTTP response: a caller-fixable *ValidationError or
+// *ReadOnlyError becomes 400 (the error's own message is safe to return --
+// both types exist specifically to describe the caller's mistake back to
+// them), anything else is logged and reported as a generic 500. Shared by
+// every handler whose geometry call can fail either way.
+//
+// handlePostLoad deliberately does not use this: every LoadFrom failure is
+// about the path the caller gave, not an internal failure on our part, so
+// it's unconditionally 400 regardless of error type -- see its own comment.
+func respondGeometryErr(w http.ResponseWriter, err error, logMsg string, logArgs ...any) {
+	var validation *geometry.ValidationError
+	var readOnly *geometry.ReadOnlyError
+
+	switch {
+	case errors.As(err, &validation), errors.As(err, &readOnly):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		slog.Error(logMsg, append(logArgs, "err", err)...)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+}
+
 // handlePutFieldConfig edits the virtual field: dimensions and which optional
 // markings exist. Regenerates the derived field lines/arcs and persists to
 // geometry.yml -- see geometry.Geometry.UpdateField.
@@ -94,16 +117,7 @@ func (s *VisionServer) handlePutFieldConfig() http.HandlerFunc {
 		}
 
 		if err := s.geometry.UpdateField(req.Field, req.OptionalFieldLines); err != nil {
-			var validation *geometry.ValidationError
-			var readOnly *geometry.ReadOnlyError
-
-			switch {
-			case errors.As(err, &validation), errors.As(err, &readOnly):
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			default:
-				slog.Error("updating field config", "err", err)
-				http.Error(w, "internal error", http.StatusInternalServerError)
-			}
+			respondGeometryErr(w, err, "updating field config")
 
 			return
 		}
@@ -135,16 +149,7 @@ func (s *VisionServer) handlePostSaveAs() http.HandlerFunc {
 		}
 
 		if err := s.geometry.SaveAs(req.Path, req.Field, req.OptionalFieldLines); err != nil {
-			var validation *geometry.ValidationError
-			var readOnly *geometry.ReadOnlyError
-
-			switch {
-			case errors.As(err, &validation), errors.As(err, &readOnly):
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			default:
-				slog.Error("saving field config as", "path", req.Path, "err", err)
-				http.Error(w, "internal error", http.StatusInternalServerError)
-			}
+			respondGeometryErr(w, err, "saving field config as", "path", req.Path)
 
 			return
 		}
@@ -245,17 +250,11 @@ func (s *VisionServer) handlePutLineCorners() http.HandlerFunc {
 			return
 		}
 
-		if req.GoalSideMarker < 1 || req.GoalSideMarker > len(req.Corners) {
-			http.Error(w, "goalSideMarker: must identify one of the given corners", http.StatusBadRequest)
-
-			return
-		}
-
-		// s.configFile is server config, not part of the request -- a
-		// failure here is our problem, not the caller's, so 500.
+		// goalSideMarker's own range check lives in WriteLineCorners, not
+		// duplicated here -- it returns a *ValidationError for exactly this
+		// case, which respondGeometryErr turns back into a 400.
 		if err := geometry.WriteLineCorners(s.configFile, req.Corners, req.GoalSideMarker); err != nil {
-			slog.Error("writing line corners", "path", s.configFile, "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			respondGeometryErr(w, err, "writing line corners", "path", s.configFile)
 
 			return
 		}

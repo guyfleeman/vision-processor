@@ -170,6 +170,50 @@ func TestConcurrentAbsorbAndRead(t *testing.T) {
 	}
 }
 
+// Real vision_processor instances wait for the field-geometry template
+// before they can calibrate -- Run must hand it to them immediately on
+// startup, not only after the first interval elapses.
+func TestRunPublishesImmediatelyBeforeTheFirstInterval(t *testing.T) {
+	g := testGeometry(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	published := make(chan []byte, 1)
+
+	// An interval far longer than the test's own timeout: if a publish
+	// arrives at all, it can only be the immediate one, not a ticked one.
+	go func() { _ = g.run(ctx, time.Hour, func(b []byte) { published <- b }) }()
+
+	select {
+	case <-published:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not publish immediately")
+	}
+}
+
+// A Run started with an already-cancelled context does nothing at all --
+// confirms the immediate publish above doesn't fire unconditionally.
+func TestRunSkipsTheImmediatePublishIfAlreadyCancelled(t *testing.T) {
+	g := testGeometry(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	published := make(chan []byte, 1)
+
+	err := g.run(ctx, time.Hour, func(b []byte) { published <- b })
+	if err != context.Canceled { //nolint:errorlint // exact sentinel, not a wrapped error
+		t.Fatalf("run returned %v, want context.Canceled", err)
+	}
+
+	select {
+	case <-published:
+		t.Fatal("run published despite an already-cancelled context")
+	default:
+	}
+}
+
 func TestRunPublishesUntilCancelled(t *testing.T) {
 	g := testGeometry(t)
 

@@ -189,6 +189,41 @@ func (g *Geometry) applyFieldConfig(cfg FieldConfig, opt OptionalLinesConfig) {
 	g.optional = optional
 }
 
+// applyAndPersist mutates g to reflect cfg/opt, re-encodes, and calls persist
+// to write the change to disk -- rolling the in-memory mutation back if
+// either step fails, so a rejected save never leaves g holding (and
+// broadcasting, over multicast and the WS hub) field data that was never
+// actually written anywhere. Callers must hold mu, must have already
+// validated cfg, and must have already checked ReadOnlyFiles for whichever
+// path persist is about to write to.
+func (g *Geometry) applyAndPersist(cfg FieldConfig, opt OptionalLinesConfig, persist func() error) error {
+	previousField := g.wrapper.Geometry.Field
+	previousOptional := g.optional
+	previousEncoded := g.encoded
+
+	rollback := func() {
+		g.wrapper.Geometry.Field = previousField
+		g.optional = previousOptional
+		g.encoded = previousEncoded
+	}
+
+	g.applyFieldConfig(cfg, opt)
+
+	if err := g.reencode(); err != nil {
+		rollback()
+
+		return fmt.Errorf("encode updated geometry: %w", err)
+	}
+
+	if err := persist(); err != nil {
+		rollback()
+
+		return fmt.Errorf("save %s: %w", g.path, err)
+	}
+
+	return nil
+}
+
 // UpdateField replaces the field dimensions and optional-line toggles,
 // regenerates the derived field lines/arcs, and persists the change to the
 // file Geometry was loaded from. Existing calibrations are kept.
@@ -210,17 +245,7 @@ func (g *Geometry) UpdateField(cfg FieldConfig, opt OptionalLinesConfig) error {
 		return &ReadOnlyError{path: g.path}
 	}
 
-	g.applyFieldConfig(cfg, opt)
-
-	if err := g.reencode(); err != nil {
-		return fmt.Errorf("encode updated geometry: %w", err)
-	}
-
-	if err := g.saveYAML(cfg, opt); err != nil {
-		return fmt.Errorf("save %s: %w", g.path, err)
-	}
-
-	return nil
+	return g.applyAndPersist(cfg, opt, func() error { return g.saveYAML(cfg, opt) })
 }
 
 // SaveAs is UpdateField plus switching which file Geometry edits: it writes
@@ -240,22 +265,18 @@ func (g *Geometry) SaveAs(path string, cfg FieldConfig, opt OptionalLinesConfig)
 		return &ReadOnlyError{path: path}
 	}
 
-	g.applyFieldConfig(cfg, opt)
-
-	if err := g.reencode(); err != nil {
-		return fmt.Errorf("encode updated geometry: %w", err)
-	}
-
-	// g.path only changes once we're past validation and encoding, so a
-	// rejected SaveAs never leaves Geometry claiming to be a file nothing was
-	// actually written to.
+	// g.path changes before persisting so applyAndPersist's error message (and
+	// saveYAML's ReadOnlyFiles recheck) refer to the new path -- rolled back
+	// on any failure, same as the field/optional/encoded state, so a rejected
+	// SaveAs never leaves Geometry claiming to be a file nothing was actually
+	// written to.
 	previousPath := g.path
 	g.path = path
 
-	if err := g.saveYAML(cfg, opt); err != nil {
+	if err := g.applyAndPersist(cfg, opt, func() error { return g.saveYAML(cfg, opt) }); err != nil {
 		g.path = previousPath
 
-		return fmt.Errorf("save %s: %w", path, err)
+		return err
 	}
 
 	return nil

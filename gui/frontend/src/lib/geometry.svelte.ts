@@ -5,6 +5,7 @@ import type {
   SSL_FieldLineSegmentJson,
   SSL_FieldCircularArcJson,
 } from "../proto/vision/ssl_vision_geometry_pb";
+import { requestJSON, withLoadingState } from "./api";
 
 // The editable dimensions: everything the generated field size carries except
 // fieldLines/fieldArcs, which are derived server-side and never hand-edited.
@@ -75,16 +76,14 @@ export const virtualField = $state<{
 
 // Presets are loaded separately from loadVirtualField: a preset endpoint that
 // can't be read (see the Go handler's graceful degradation) shouldn't stop
-// the actual field config from loading, and vice versa.
+// the actual field config from loading, and vice versa -- a convenience, not
+// required, so a failure here is silently ignored rather than surfaced.
 export async function loadFieldPresets(): Promise<void> {
   try {
-    const response = await fetch("/api/geometry/presets");
-    if (response.ok) {
-      virtualField.presets = (await response.json()) as FieldPreset[];
-    }
+    const response = await requestJSON("/api/geometry/presets");
+    virtualField.presets = (await response.json()) as FieldPreset[];
   } catch {
-    // Presets are a convenience, not required for the editor to work -- an
-    // empty list just means the preset section has nothing to offer.
+    // An empty list just means the preset section has nothing to offer.
   }
 }
 
@@ -93,9 +92,7 @@ export async function loadFieldPresets(): Promise<void> {
 // them (load, save, save-as) leaves the server having just regenerated these
 // from whatever field config is now active.
 async function refreshFieldMarkings(): Promise<void> {
-  const response = await fetch("/api/geometry");
-  if (!response.ok) return;
-
+  const response = await requestJSON("/api/geometry");
   const geometry = (await response.json()) as GeometryResponse;
   virtualField.fieldLines = geometry.geometry?.field?.fieldLines ?? [];
   virtualField.fieldArcs = geometry.geometry?.field?.fieldArcs ?? [];
@@ -109,106 +106,78 @@ function applyFieldConfigResponse(config: FieldConfigResponse): void {
 }
 
 export async function loadVirtualField(): Promise<void> {
-  virtualField.loading = true;
-  virtualField.error = null;
-
-  try {
-    const response = await fetch("/api/geometry/field");
-    if (!response.ok) {
-      throw new Error(`GET /api/geometry/field: ${String(response.status)}`);
-    }
-
-    applyFieldConfigResponse((await response.json()) as FieldConfigResponse);
-    await refreshFieldMarkings();
-  } catch (err) {
-    virtualField.error = err instanceof Error ? err.message : String(err);
-  } finally {
-    virtualField.loading = false;
-  }
+  await withLoadingState(
+    (v) => (virtualField.loading = v),
+    (v) => (virtualField.error = v),
+    async () => {
+      const response = await requestJSON("/api/geometry/field");
+      applyFieldConfigResponse((await response.json()) as FieldConfigResponse);
+      await refreshFieldMarkings();
+    },
+  );
 }
 
 export async function saveVirtualField(): Promise<void> {
-  virtualField.saving = true;
-  virtualField.error = null;
+  await withLoadingState(
+    (v) => (virtualField.saving = v),
+    (v) => (virtualField.error = v),
+    async () => {
+      await requestJSON("/api/geometry/field", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          field: virtualField.field,
+          optionalFieldLines: virtualField.optionalFieldLines,
+        } satisfies FieldConfigResponse),
+      });
 
-  try {
-    const response = await fetch("/api/geometry/field", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        field: virtualField.field,
-        optionalFieldLines: virtualField.optionalFieldLines,
-      } satisfies FieldConfigResponse),
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    virtualField.dirty = false;
-    await refreshFieldMarkings();
-  } catch (err) {
-    virtualField.error = err instanceof Error ? err.message : String(err);
-  } finally {
-    virtualField.saving = false;
-  }
+      virtualField.dirty = false;
+      await refreshFieldMarkings();
+    },
+  );
 }
 
 // Writes the current field config to a new path and switches to editing that
 // file (see geometry.Geometry.SaveAs) -- subsequent saveVirtualField calls go
 // there, not wherever this session started out.
 export async function saveVirtualFieldAs(path: string): Promise<void> {
-  virtualField.saving = true;
-  virtualField.error = null;
+  await withLoadingState(
+    (v) => (virtualField.saving = v),
+    (v) => (virtualField.error = v),
+    async () => {
+      await requestJSON("/api/geometry/field/save-as", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path,
+          field: virtualField.field,
+          optionalFieldLines: virtualField.optionalFieldLines,
+        } satisfies FieldConfigResponse),
+      });
 
-  try {
-    const response = await fetch("/api/geometry/field/save-as", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        path,
-        field: virtualField.field,
-        optionalFieldLines: virtualField.optionalFieldLines,
-      } satisfies FieldConfigResponse),
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    virtualField.path = path;
-    virtualField.dirty = false;
-    await refreshFieldMarkings();
-  } catch (err) {
-    virtualField.error = err instanceof Error ? err.message : String(err);
-  } finally {
-    virtualField.saving = false;
-  }
+      virtualField.path = path;
+      virtualField.dirty = false;
+      await refreshFieldMarkings();
+    },
+  );
 }
 
 // Discards the current field config and replaces it with whatever's at path
 // (see geometry.Geometry.LoadFrom). Existing calibrations are dropped
 // server-side -- they belonged to the field this used to be.
 export async function loadVirtualFieldFrom(path: string): Promise<void> {
-  virtualField.loading = true;
-  virtualField.error = null;
+  await withLoadingState(
+    (v) => (virtualField.loading = v),
+    (v) => (virtualField.error = v),
+    async () => {
+      const response = await requestJSON("/api/geometry/field/load", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
 
-  try {
-    const response = await fetch("/api/geometry/field/load", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    applyFieldConfigResponse((await response.json()) as FieldConfigResponse);
-    await refreshFieldMarkings();
-  } catch (err) {
-    virtualField.error = err instanceof Error ? err.message : String(err);
-  } finally {
-    virtualField.loading = false;
-  }
+      applyFieldConfigResponse((await response.json()) as FieldConfigResponse);
+      await refreshFieldMarkings();
+    },
+  );
 }

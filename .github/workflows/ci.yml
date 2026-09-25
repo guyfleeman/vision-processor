@@ -49,15 +49,15 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Format, vet, test
+      - name: Format, vet, build, test
         run: |
           nix develop --command bash -c '
             cd gui
             make .proto
             test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-            go vet ./cmd/... ./internal/... ./frontend
-            go build ./cmd/... ./internal/... ./frontend
-            go test ./cmd/... ./internal/... ./frontend -race
+            make vet
+            make build
+            make go-test
           '
 
   frontend:
@@ -77,9 +77,7 @@ jobs:
       - name: Lint, check, build
         run: |
           nix develop --command bash -c '
-            cd gui && make .proto && cd frontend
-            npm run lint
-            npm run format:check
-            npm run check
-            npm run build
+            cd gui
+            make frontend-test
+            make frontend
           '

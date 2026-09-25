@@ -5,9 +5,22 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
+
+// instanceConfigMu serializes every WriteLineCorners/ReadLineCorners call.
+// Unlike Geometry, there's no per-instance object to hang a mutex off of --
+// this is a bare read-modify-write of a file on disk -- so a single
+// package-level lock is what keeps two concurrent PUT /api/config/line-corners
+// requests (two browser tabs, a double-click before the Save button disables)
+// from each doing their own unsynchronized os.ReadFile/os.WriteFile and
+// silently clobbering one another, and keeps a concurrent read from ever
+// seeing a half-written file. Matches this package's existing single,
+// same-host-instance assumption (see gui/CLAUDE.md) -- one config.yml, one
+// lock.
+var instanceConfigMu sync.Mutex
 
 // Corner is one point in image pixel coordinates, as produced by the corner
 // picker. Only the first element of a slice passed to WriteLineCorners is
@@ -31,6 +44,12 @@ var (
 // goal_side_marker (yaml-cpp's Node["key"] lookups ignore unknown keys), it's
 // purely a record for whoever looks at this file next.
 //
+// A bad corners/goalSideMarker argument is reported as a *ValidationError
+// (the caller's mistake), same type UpdateField/SaveAs use for the same
+// purpose -- callers use errors.As to give it a 400 instead of a 500, so this
+// bounds check only has to live here, not also at whatever HTTP handler
+// calls in.
+//
 // This edits the text directly rather than decoding/re-encoding the file as
 // YAML (contrast Geometry.saveYAML for geometry.yml): config.yml ships full
 // of comments and commented-out example values meant to be hand-read, and
@@ -40,12 +59,15 @@ var (
 // splice touches nothing outside the two keys it's asked to set.
 func WriteLineCorners(path string, corners []Corner, goalSideMarker int) error {
 	if len(corners) == 0 {
-		return fmt.Errorf("no corners given")
+		return &ValidationError{fmt.Errorf("no corners given")}
 	}
 
 	if goalSideMarker < 1 || goalSideMarker > len(corners) {
-		return fmt.Errorf("goalSideMarker must identify one of the %d corners, got %d", len(corners), goalSideMarker)
+		return &ValidationError{fmt.Errorf("goalSideMarker must identify one of the %d corners, got %d", len(corners), goalSideMarker)}
 	}
+
+	instanceConfigMu.Lock()
+	defer instanceConfigMu.Unlock()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -85,6 +107,9 @@ type instanceConfig struct {
 // file has no line_corners yet -- that's the normal, not-yet-calibrated
 // state, not a failure.
 func ReadLineCorners(path string) ([]Corner, int, error) {
+	instanceConfigMu.Lock()
+	defer instanceConfigMu.Unlock()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read %s: %w", path, err)

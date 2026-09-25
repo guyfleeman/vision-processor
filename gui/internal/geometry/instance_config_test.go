@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -248,5 +249,44 @@ func TestWriteLineCornersUpdatesAnExistingGoalSideMarkerInPlace(t *testing.T) {
 
 	if !strings.Contains(string(got), "goal_side_marker: 4") {
 		t.Errorf("goal_side_marker was not updated to the new value:\n%s", got)
+	}
+}
+
+// Two browser tabs (or a double-click racing the Save button's disabled
+// state) can call this concurrently on the same file. instanceConfigMu must
+// serialize them -- run under -race, and check the result is one complete
+// write, not a torn mix of two.
+func TestWriteLineCornersIsSafeForConcurrentCallers(t *testing.T) {
+	path := testConfigFile(t)
+
+	var wg sync.WaitGroup
+
+	for i := 1; i <= 8; i++ {
+		wg.Add(1)
+
+		go func(marker int) {
+			defer wg.Done()
+
+			corners := []Corner{
+				{X: marker, Y: marker},
+				{X: marker + 1, Y: marker + 1},
+				{X: marker + 2, Y: marker + 2},
+				{X: marker + 3, Y: marker + 3},
+			}
+			if err := WriteLineCorners(path, corners, 1); err != nil {
+				t.Errorf("WriteLineCorners: %v", err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	corners, marker, err := ReadLineCorners(path)
+	if err != nil {
+		t.Fatalf("ReadLineCorners: %v", err)
+	}
+
+	if len(corners) != 4 || marker != 1 {
+		t.Errorf("got corners=%v marker=%d, want exactly one complete write's worth of data", corners, marker)
 	}
 }

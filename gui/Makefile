@@ -11,7 +11,7 @@ FRONTEND_SOURCES = $(shell find frontend -type f \
 
 PROTO_SOURCES = $(shell find ../proto/proto -type f 2>/dev/null)
 
-.PHONY: all frontend install test run proto clean
+.PHONY: all frontend install test go-test frontend-test vet build run proto clean
 
 all: install
 
@@ -47,9 +47,23 @@ frontend: .frontend
 install: frontend
 	go install -v $(GO_PACKAGES)
 
-test: frontend
+vet: frontend
+	go vet $(GO_PACKAGES)
+
+build: frontend
+	go build $(GO_PACKAGES)
+
+go-test: frontend
+	go test $(GO_PACKAGES) -race
+
+frontend-test: frontend
 	cd frontend && npm run check && npm run lint && npm run format:check
-	go test $(GO_PACKAGES)
+
+# CI runs go-test and frontend-test as separate parallel jobs (see
+# .github/workflows/ci.yml) -- this is the single "everything before you
+# push" target for local use, composed of exactly those same two so the
+# package/command lists live in one place either way.
+test: go-test frontend-test
 
 run: frontend
 	go run ./cmd/$(BINARY)
