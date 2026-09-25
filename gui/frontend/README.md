@@ -1,11 +1,19 @@
 # vision-processor-gui-frontend
 
-Browser UI for the vision-processor GUI. Svelte 5 + TypeScript + Vite.
+Browser UI for the vision-processor GUI. Svelte 5, TypeScript, and Vite. See
+[`gui/README.md`](../README.md) for building it as part of the Go host, and
+[`gui/ARCHITECTURE.md`](../ARCHITECTURE.md) for how the whole system fits
+together. This document covers the frontend's own layout and scripts.
 
-Currently a skeleton: connects to a WebSocket at `/ws` and asks the
-backend (via `GET /api/snapshots`) which debug images currently exist
-on disk (only meaningful when the browser and the vision processor
-share a filesystem -- see the root [README.md](../../README.md)).
+The UI is organized as a two column shell: an instance list and config
+category nav on the left, the selected category's panel on the right. A tab
+bar above the panel gives quick access to the categories used most, Virtual
+Field, Geometry, and Color. Virtual Field edits the shared `geometry.yml`
+field template. Geometry embeds the corner picker, which lets an operator
+mark a calibration corner on a debug snapshot and save it into that
+instance's `config.yml`. Debug snapshots (via `GET /api/snapshots`) are only
+meaningful when the browser and the vision processor share a filesystem, see
+the root [README.md](../../README.md).
 
 ## Run
 
@@ -28,19 +36,30 @@ make run
 Either way the Go host in `gui/` must be running for the connection
 badge and snapshot grid to show anything.
 
-## Architecture
+## Layout
 
-- `src/lib/wrapper-bus.ts` — single `WebSocket` client. Exposes
-  `connectionState` (Svelte store) and `topic<T>(name)` (returns a
-  store of the latest message). Subscribes to a topic lazily on first
-  reader, unsubscribes when the last reader goes away. Reconnects on
-  close with exponential backoff (1s → 30s).
-- `src/App.svelte` — placeholder UI: connection badge + a grid of
-  `<img>` tags, one per entry returned by `GET /api/snapshots`. The list is
-  refreshed every 5 s; each `<img>` is refreshed once per second via a
-  cache-busting `?t=<ms>` query. Plus a dev panel with a subscribe
-  toggle + JSON dump for `wrapper_packet.out`.
-- `src/main.ts` — mounts `App` into `#app`.
+- `src/lib/layout/` holds the shell: `Shell.svelte` (the two column grid and
+  connection badge), `InstanceList.svelte`, `ConfigNav.svelte`, `TabBar.svelte`,
+  and `MainContent.svelte`, which switches panels on `nav.selectedCategoryId`.
+  `nav.svelte.ts` and `configCategories.ts` hold the shared navigation state
+  and the category list itself.
+- `src/lib/FieldEditor.svelte` is the Virtual Field editor, backed by
+  `src/lib/geometry.svelte.ts`, a module level `$state` object shared with
+  anything else that needs the field config.
+- `src/lib/config/GeometryPanel.svelte` is the Geometry category's panel. It
+  embeds `src/lib/CornerPicker.svelte`, backed by
+  `src/lib/lineCorners.svelte.ts` in the same way.
+- `src/lib/api.ts` holds the fetch helpers (`requestJSON`, `withLoadingState`)
+  every panel's load and save functions are built on.
+- `src/lib/wrapper-bus.ts` is a single `WebSocket` client. It exposes
+  `connectionState` (a Svelte store) and `topic<T>(name)` (a store of the
+  latest message on that topic). A topic subscribes lazily on first reader
+  and unsubscribes when the last reader goes away. It reconnects on close
+  with exponential backoff, from 1 second up to 30.
+- `src/App.svelte` mounts the shell and still carries a couple of temporary
+  debug utilities predating it (a snapshot grid and a raw `wrapper_packet.out`
+  dump), kept until the mockup's real Video and Debug Console panels exist.
+- `src/main.ts` mounts `App` into `#app`.
 
 The WS wire format (`gui/internal/hub`):
 
