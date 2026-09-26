@@ -4,6 +4,14 @@
 // responsible for. Reimplemented here rather than fetched from the Go host
 // because it's pure geometry with no state, and the UI needs it live as the
 // user changes camera count/id, not round-tripped through an API call.
+// Which camera counts are valid for each field layout: a full field supports
+// 1/2/4 cameras, a half field only 1/2. Shared between FieldEditor's layout
+// section and the setup wizard's equivalent step.
+export const CAMERA_COUNT_OPTIONS: Record<"full" | "half", number[]> = {
+  full: [1, 2, 4],
+  half: [1, 2],
+};
+
 export interface FieldSlice {
   minX: number;
   minY: number;

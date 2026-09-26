@@ -4,6 +4,7 @@
   import Shell from "./lib/layout/Shell.svelte";
   import { nav, selectedCategory } from "./lib/layout/nav.svelte";
   import { requestJSON } from "./lib/api";
+  import SetupWizard from "./lib/wizard/SetupWizard.svelte";
 
   let subscribed = $state(false);
   let wrapperPacket = $state<Record<string, unknown> | null>(null);
@@ -129,6 +130,8 @@
     </section>
   {/snippet}
 </Shell>
+
+<SetupWizard />
 
 <style>
   .below-hint {

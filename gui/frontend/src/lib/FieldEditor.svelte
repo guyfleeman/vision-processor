@@ -10,7 +10,9 @@
   } from "./geometry.svelte";
   import FieldSketch from "./FieldSketch.svelte";
   import { scalePreset } from "./fieldPresets";
-  import { computeFieldSlice } from "./fieldSplit";
+  import { computeFieldSlice, CAMERA_COUNT_OPTIONS } from "./fieldSplit";
+  import { DIMENSION_FIELDS, OPTIONAL_LINE_FIELDS } from "./fieldConfigFields";
+  import { openWizard } from "./wizard/wizard.svelte";
 
   // "Half field" is a data-entry convenience, not a wire concept: the backend
   // (SSL_GeometryFieldSize.field_length) only ever means the FULL field.
@@ -24,10 +26,6 @@
   // camAmount here is informational only -- it belongs in each vision
   // processor's own config.yml (SSL_VPConfigGeometry.camera_amount), which
   // this host does not yet read, write, or push to any instance.
-  const CAMERA_COUNT_OPTIONS: Record<"full" | "half", number[]> = {
-    full: [1, 2, 4],
-    half: [1, 2],
-  };
   let cameraCount = $state(1);
   let cameraId = $state(0);
 
@@ -80,6 +78,7 @@
     // Ball/robot size are real hardware, not scaled with a shrunk field --
     // scalePreset always leaves them at the preset's own value.
     virtualField.field = scalePreset(preset, scalePercent);
+    virtualField.optionalFieldLines = { ...preset.optionalFieldLines };
     markDirty();
   }
 
@@ -96,38 +95,6 @@
     if (virtualField.dirty && !confirm("Discard unsaved changes?")) return;
     void loadVirtualFieldFrom(loadPath);
   }
-
-  // Dimension fields, paired with their FieldConfig key and a label. Order
-  // matches how someone would actually measure a field: outer boundary first,
-  // then the goal, then the penalty area, then the smaller markings.
-  // fieldLength is handled separately above (half/full aware).
-  const dimensionFields: {
-    key: keyof typeof virtualField.field;
-    label: string;
-  }[] = [
-    { key: "fieldWidth", label: "Field width" },
-    { key: "boundaryWidth", label: "Boundary width" },
-    { key: "boundaryWidthGoalLine", label: "Boundary width (goal line)" },
-    { key: "goalWidth", label: "Goal width" },
-    { key: "goalDepth", label: "Goal depth" },
-    { key: "goalHeight", label: "Goal height" },
-    { key: "penaltyAreaDepth", label: "Penalty area depth" },
-    { key: "penaltyAreaWidth", label: "Penalty area width" },
-    { key: "centerCircleRadius", label: "Center circle radius" },
-    { key: "lineThickness", label: "Line thickness" },
-    { key: "ballRadius", label: "Ball radius" },
-    { key: "maxRobotRadius", label: "Max robot radius" },
-  ];
-
-  const optionalLineFields: {
-    key: keyof typeof virtualField.optionalFieldLines;
-    label: string;
-  }[] = [
-    { key: "halfway", label: "Halfway line" },
-    { key: "goal2Goal", label: "Center line (goal-to-goal)" },
-    { key: "centerCircle", label: "Center circle" },
-    { key: "penalty", label: "Penalty area" },
-  ];
 
   // virtualField is a module-level singleton, not component-local state --
   // switching tabs away and back destroys and recreates this component
@@ -156,6 +123,9 @@
   <div class="title-row">
     <h2>Virtual field</h2>
     <span class="path">{virtualField.path || "(unsaved)"}</span>
+    <button type="button" class="wizard-button" onclick={openWizard}>
+      Run setup wizard
+    </button>
   </div>
 
   {#if virtualField.error}
@@ -301,7 +271,7 @@
 
       <fieldset disabled={virtualField.loading}>
         <legend>Dimensions</legend>
-        {#each dimensionFields as { key, label } (key)}
+        {#each DIMENSION_FIELDS as { key, label } (key)}
           <label>
             {label}
             <input
@@ -315,7 +285,7 @@
 
       <fieldset disabled={virtualField.loading}>
         <legend>Markings present on this field</legend>
-        {#each optionalLineFields as { key, label } (key)}
+        {#each OPTIONAL_LINE_FIELDS as { key, label } (key)}
           <label class="checkbox">
             <input
               type="checkbox"
@@ -350,6 +320,21 @@
     align-items: baseline;
     gap: 0.75rem;
     margin-bottom: 0.5rem;
+  }
+
+  .wizard-button {
+    margin-left: auto;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid #1a56db;
+    border-radius: 4px;
+    background: none;
+    color: #1a56db;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .wizard-button:hover {
+    background: #eff6ff;
   }
 
   .title-row h2 {
