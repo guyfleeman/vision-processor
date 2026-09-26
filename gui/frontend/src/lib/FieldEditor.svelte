@@ -3,13 +3,11 @@
   import {
     virtualField,
     loadVirtualField,
-    loadFieldPresets,
     saveVirtualField,
     saveVirtualFieldAs,
     loadVirtualFieldFrom,
   } from "./geometry.svelte";
   import FieldSketch from "./FieldSketch.svelte";
-  import { scalePreset } from "./fieldPresets";
   import { computeFieldSlice, CAMERA_COUNT_OPTIONS } from "./fieldSplit";
   import { DIMENSION_FIELDS, OPTIONAL_LINE_FIELDS } from "./fieldConfigFields";
   import { openWizard } from "./wizard/wizard.svelte";
@@ -66,22 +64,6 @@
     }
   }
 
-  let selectedPresetName = $state("Division B");
-  let scalePercent = $state(100);
-
-  function applyPreset(): void {
-    const preset = virtualField.presets.find(
-      (p) => p.name === selectedPresetName,
-    );
-    if (!preset) return;
-
-    // Ball/robot size are real hardware, not scaled with a shrunk field --
-    // scalePreset always leaves them at the preset's own value.
-    virtualField.field = scalePreset(preset, scalePercent);
-    virtualField.optionalFieldLines = { ...preset.optionalFieldLines };
-    markDirty();
-  }
-
   let saveAsPath = $state("");
   let loadPath = $state("");
 
@@ -106,8 +88,6 @@
     if (!virtualField.dirty || confirm("Discard unsaved changes?")) {
       void loadVirtualField();
     }
-
-    void loadFieldPresets();
   });
 
   function markDirty(): void {
@@ -242,31 +222,6 @@
             {/each}
           </select>
         </label>
-      </fieldset>
-
-      <fieldset disabled={virtualField.loading}>
-        <legend>Start from a rulebook preset</legend>
-        {#if virtualField.presets.length === 0}
-          <p class="hint">No presets available.</p>
-        {/if}
-        <label>
-          Division
-          <select bind:value={selectedPresetName}>
-            {#each virtualField.presets as preset (preset.name)}
-              <option value={preset.name}>{preset.name}</option>
-            {/each}
-          </select>
-        </label>
-        <label>
-          Scale to
-          <span>
-            <input type="number" bind:value={scalePercent} min="1" max="200" />
-            %
-          </span>
-        </label>
-        <button type="button" onclick={applyPreset}>
-          Fill in dimensions from this preset
-        </button>
       </fieldset>
 
       <fieldset disabled={virtualField.loading}>

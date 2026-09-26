@@ -29,7 +29,8 @@ interface FieldConfigResponse {
 
 // A rulebook preset, as served by GET /api/geometry/presets -- read live
 // from geometry-divA.yml/geometry-divB.yml on the Go host, not duplicated
-// here. See fieldPresets.ts for what's done with one once loaded.
+// here. See the setup wizard's WizardStart.svelte for what's done with one
+// once loaded.
 export interface FieldPreset extends FieldConfigResponse {
   name: string;
 }
